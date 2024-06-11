@@ -1,26 +1,24 @@
 #!/usr/bin/env python3
 # encoding: utf-8
 
-import os
 import math
-import json
+import random
 
 import cv2 as cv
 import numpy as np
 from sklearn.decomposition import PCA
 
-import yaml
-from yaml.loader import SafeLoader
-
-from detect_aruco import drawArucos
+from src.image_correction import initCalibrationData, correctImage, correctCoordinates
+from src.load_board_config import getBoardData, projectBoardMatrix, projectBoardConfig, getCellIndex
+from src.detect_shapes import detectBoardContour, detectColorSquares, isSlot
 
 # Hue in degrees (0-360); epsilon in degrees too
 color_dict = {'red':    {'h': 350,   'eps': 29}, 
               'green':  {'h': 125, 'eps': 35}, 
               'blue':   {'h': 220, 'eps': 35},
-              'yellow': {'h': 50,  'eps': 30}}
+              'yellow': {'h': 50,  'eps': 28}}
 
-colors_list = {'red': (0,0,255), 'green': (0,255,0), 'blue': (255,0,0), 'yellow': (0,255,255), 'black': (0,0,0)}
+colors_list = {'red': (0,0,255), 'green': (0,255,0), 'blue': (255,0,0), 'yellow': (0,255,255), 'black': (255,255,0)}
 
 WINDOW_STREAM = '(W1) Video'
 video_path = './data/world_cut.mp4'
@@ -55,150 +53,16 @@ cv.setMouseCallback(WINDOW_STREAM, mouse_callback)
 # cv.setMouseCallback('green_mask', mouse_callback)
 # cv.setMouseCallback('blue_mask', mouse_callback)
 
-
-def projectCenter(contour):
-    center = None
-    M = cv.moments(contour)
-    if M["m00"] != 0:
-        # Calcular las coordenadas del centroide
-        cX = int(M["m10"] / M["m00"])
-        cY = int(M["m01"] / M["m00"])
-        center_x = int((M['m10'] / M['m00']))
-        center_y = int((M['m01'] / M['m00']))
-        center = (center_x, center_y)
-    return center
-
-def centerHueChannel(hue_channel, new_center):
-    lookUpTable = np.zeros(256, dtype=np.uint8)
+def ComputePixelsPerMilimeters(approx_contour, real_width_mm, real_height_mm):
+    width_px = np.linalg.norm(approx_contour[0][0] - approx_contour[1][0])
+    height_px = np.linalg.norm(approx_contour[1][0] - approx_contour[2][0])
     
-    for i in range(len(lookUpTable)):
-        lookUpTable[i] = (i+128-new_center) % 256
+    pixels_per_mm_width = width_px / real_width_mm
+    pixels_per_mm_height = height_px / real_height_mm
 
-    return cv.LUT(hue_channel, lookUpTable)
+    pixels_per_mm = (pixels_per_mm_width + pixels_per_mm_height) / 2
+    return pixels_per_mm
 
-def getMaskHue(hue, sat, intensity, h_ref, h_epsilon, s_margins = [5,255], v_margins = [60,215]):
-    h_ref = int(h_ref/360.0*255.0)
-    h_epsilon = int(h_epsilon/360.0*255.0)
-
-    hue_new = centerHueChannel(hue, h_ref)
-    hsv_new = cv.merge((hue_new, sat, intensity))
-
-    res = cv.inRange(hsv_new, 
-                        tuple([128-h_epsilon,s_margins[0],v_margins[0]]), 
-                        tuple([128+h_epsilon,s_margins[1],v_margins[1]]))
-    kernel = cv.getStructuringElement(cv.MORPH_CROSS, (3, 3))   # [[0,1,0], [1,1,1], [0,1,0]]
-    res = cv.morphologyEx(res, cv.MORPH_OPEN, kernel,  iterations=2)
-    res = cv.morphologyEx(res, cv.MORPH_CLOSE, kernel, iterations=2)
-    
-    return res
-
-def checkShape(contour, area_filter = [900,10000]):
-    
-    shapes = {'triangle': {'sides': 3, 'aspect_ratio': None, 'circularity': None},
-              'square': {'sides': 4, 'aspect_ratio': [0.8,1.1], 'circularity': None},
-              'rectangle': {'sides': 4, 'aspect_ratio': [0, math.inf], 'circularity': None}, # if not square
-              'hexagon': {'sides': 6, 'aspect_ratio': None, 'circularity': [0.4, 0.8]},
-              'trapezoid': {'sides': 4, 'aspect_ratio': None, 'circularity': [0, 0.6]},
-              'circle': {'sides': None, 'aspect_ratio': None, 'circularity': [0.85, 1]}
-            }
-    
-    perimeter = cv.arcLength(contour, True)
-    if not perimeter > 0.1:
-        return None, None
-
-    approximate = cv.approxPolyDP(contour, .04 * perimeter, True)
-    area = cv.contourArea(contour)
-
-    if area < area_filter[0] or area > area_filter[1]:
-        return None, None
-
-    x, y, w, h = cv.boundingRect(contour)
-    aspect_ratio = float(w) / h
-
-    circularity = 4 * np.pi * area / (perimeter * perimeter)
-    for shape, data in shapes.items():
-        if data['sides'] is not None and len(approximate) != data['sides']:
-            continue
-
-        if data['aspect_ratio'] is not None and not (data['aspect_ratio'][0] < aspect_ratio < data['aspect_ratio'][1]):
-            continue
-        
-        if data['circularity'] is not None and not data['circularity'][0] < circularity < data['circularity'][1]:
-            continue
-
-        return shape, approximate
-    
-    return None, None
-
-def detectBoardTransform(image, display_image):
-    global margin_color
-
-
-    # gray = cv.cvtColor(image, cv.COLOR_BGR2GRAY)
-    # # gray = claheEqualization(gray)
-    # edge_image = cv.Canny(gray, threshold1=50, threshold2=200)
-
-    # # cv.imshow(f'border_mask', edge_image)
-
-    # return []
-
-    hue, sat, intensity = cv.split(cv.cvtColor(image, cv.COLOR_BGR2HSV_FULL))
-    # Take any hue with low brightness
-    res = getMaskHue(hue, sat, intensity, h_ref=0, h_epsilon=180, s_margins=[0,255], v_margins = [0,70])
-    # cv.imshow(f'border_mask', res)
-
-    edge_image = cv.Canny(res, threshold1=50, threshold2=200)
-    contours, hierarchy = cv.findContours(edge_image, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE)
-    
-    cv.imshow(f'border_edges', edge_image)
-
-    borders = []
-    for contour in contours:
-        shape, approx = checkShape(contour, area_filter=[1000, math.inf])
-        if shape == 'rectangle':
-            borders.append(approx)
-    display_image = cv.drawContours(display_image, borders, -1, colors_list['black'], 5)
-    return borders
-
-def detectColorSquares(image, display_image):
-    global color_dict, colors_list, color_dict_epsilon
-    
-    contours_filtered = dict()
-
-    hue, sat, intensity = cv.split(cv.cvtColor(image, cv.COLOR_BGR2HSV_FULL))
-    gray = cv.cvtColor(image, cv.COLOR_BGR2GRAY)
-    for color, h_ref in color_dict.items():
-        res = getMaskHue(hue, sat, intensity, h_ref['h'], h_ref['eps'])
-        edge_image = cv.Canny(res, threshold1=50, threshold2=200)
-        
-        # masked_image = cv.bitwise_not(res)
-        # masked_image = cv.bitwise_and(image, image, mask=masked_image)
-        # cv.imshow(f'{color}_mask',masked_image)
-        # cv.imshow(f'{color}_mask', edge_image)
-        
-
-        # lines = cv.HoughLinesP(edge_image, 1, np.pi/180, threshold=100, minLineLength=5, maxLineGap=10)
-        
-        # if lines is None:
-        #     continue
-
-        # for line in lines:
-        #     x1,y1,x2,y2 = line[0]
-        #     cv.line(image, (x1,y1), (x2,y2), colors_list[color], 2)
-
-
-        contours, hierarchy = cv.findContours(edge_image, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE)
-
-        squares = list()
-        for contour in contours:
-            shape, approx = checkShape(contour, area_filter=[1000, math.inf])
-            if shape == 'square':
-                squares.append(approx)
-        
-        display_image = cv.drawContours(display_image, squares, -1, colors_list[color], 2)
-        contours_filtered[color] = squares
-    
-    return contours_filtered
 
 
 # Contours detected in image and data dict of the board
@@ -275,29 +139,9 @@ def checkBoardMatch(contours, data_dict, board_size):
             print(f"Color does not match: {data['color'] = }; {data_dict[index][0] = }")
 
 
-def claheEqualization(channel):
-    clahe = cv.createCLAHE(clipLimit=3.0, tileGridSize=(8,8))
-    return clahe.apply(channel)
+
 
 if __name__ == "__main__":
-
-    ## Get camera calibration data
-    cameraMatrix = None
-    distCoeffs = None
-    if os.path.exists('camera_calib.json'):
-        try:
-            with open('camera_calib.json') as file:
-                data = json.load(file)
-
-            cameraMatrix = np.array(data['camera_matrix'])
-            distCoeffs = np.array(data['distortion_coefficients'])
-
-            print('Camera matrix:', cameraMatrix)
-            print('distortion_coefficients:', distCoeffs)
-
-        except:
-            print("Calibration file not valid")
-
 
 
     stream = cv.VideoCapture(video_path)
@@ -309,56 +153,82 @@ if __name__ == "__main__":
     frame_width = int(stream.get(cv.CAP_PROP_FRAME_WIDTH))
     frame_height = int(stream.get(cv.CAP_PROP_FRAME_HEIGHT))
     writer = cv.VideoWriter('./result.mp4', cv.VideoWriter_fourcc(*'mp4v'), fps, (frame_width, frame_height))
-    
 
-    # If calibration data is available, undistort the image
-    if cameraMatrix is not None:
-        h, w = frame_height, frame_width
-        newcameramtx, roiundistort = cv.getOptimalNewCameraMatrix(cameraMatrix, distCoeffs, (w,h), alpha=0, newImgSize=(w,h))
-        mapx, mapy = cv.initUndistortRectifyMap(cameraMatrix, distCoeffs, None, newcameramtx, (w,h), 5)
+    initCalibrationData(frame_height, frame_width, calibration_json = 'camera_calib.json')
 
-
-    board_data_dict = {}
-    with open(board_configuration) as file:
-        data = yaml.load(file, Loader=SafeLoader)
-        board_data_dict = {tuple(map(int, key.split(','))): value for key, value in data['board_config'].items()}
-        board_size = data['board_size']
+    board_size, board_size_mm, board_data_dict = getBoardData(board_configuration)
         
-
+    fixations = {}
     while True:
         ret, capture = stream.read()
         if not ret:
             print("Can't receive frame (stream end?). Exiting ...")
             break
         
-        # If calibration data is available, undistort the image
-        if cameraMatrix is not None:
-            dst = cv.remap(capture, mapx, mapy, cv.INTER_LINEAR)
- 
-            # crop the image to given roi (alpha = 0 needs no roi?¿)
-            x, y, w, h = roiundistort
-            capture = capture[y:y+h, x:x+w]
+        # Distortion and perspective correction
+        capture, display_image = correctImage(capture=capture)
 
-        # x0,y0 = 210,210
-        # x1,y1 = 990,690
-        # capture = capture[y0:y1, x0:x1]
+        board_contour = detectBoardContour(capture, display_image)
+        if board_contour is not None and len(board_contour) != 0:
+            cell_matrix, cell_width, cell_height = projectBoardMatrix(board_contour, board_size, display_image = None)
+            board_data_dict = projectBoardConfig(cell_matrix, cell_width, cell_height, board_data_dict, display_image = None, colors_list=colors_list)
+            
 
-        display_image = capture.copy()
-        contours = detectColorSquares(capture, display_image)
-        borders = detectBoardTransform(capture, display_image)
+            # desnormalized_x = int(0.5 * capture.shape[0])
+            # desnormalized_y = int(0.5 * capture.shape[1])
+            # corrected_coord = correctCoordinates((desnormalized_x, desnormalized_y))[0][0]
+            corrected_coord = (int(random.random()*display_image.shape[0]), int(random.random()*display_image.shape[1]))
+            idx = getCellIndex(corrected_coord, cell_matrix, cell_width, cell_height)
+            if idx[0] is not None:
+                print(f"Fixation detected in: {board_data_dict[idx]}")
+                color = board_data_dict[idx][0]
+                shape = board_data_dict[idx][1]
+                slot = board_data_dict[idx][2]
 
-        # checkBoardMatch(contours, board_data_dict, board_size)
+                if color not in fixations:
+                    fixations[color] = {shape: {True: 0, False: 0}}
+                if shape not in fixations[color]:
+                    fixations[color][shape] = {True: 0, False: 0}
+
+                fixations[color][shape][slot] += 1
+                cv.circle(display_image, (int(corrected_coord[0]),int(corrected_coord[1])), radius=10, color=(0,0,255), thickness=-1)
+        
+
+        ## Detection of squares and slots :)
+        # might be unnecesary
+        detected_board_data = []
+        contours_dict = detectColorSquares(capture, color_dict=color_dict, colors_list=colors_list, display_image=None)
+        for color, contour_list in contours_dict.items():
+            for contour in contour_list:
+                # print(f'Detect shape for {color} and contour {contour}')
+                is_slot, center = isSlot(capture, contour, color_dict[color], colors_list[color], display_image=None)
+                detected_board_data.append([is_slot, center])
 
         cv.imshow(WINDOW_STREAM, display_image)
-        writer.write(display_image)
+
+        resized_frame = cv.resize(display_image, (frame_width, frame_height))
+        writer.write(resized_frame)
 
         # check keystroke to exit (image window must be on focus)
         key = cv.pollKey()
-        key = cv.waitKey(0)
+        # key = cv.waitKey(0)
         if key == ord('q') or key == ord('Q') or key == 27:
             break
 
-
-    cv.destroyAllWindows()
     if stream.isOpened():  stream.release()
     if writer.isOpened():  writer.release()
+    cv.destroyAllWindows()
+
+
+    for color, shapes_dict in fixations.items():
+        time_color = 0
+        for shape, slot_dict in shapes_dict.items():
+            for slot, num in slot_dict.items():
+                num = float(num)/float(fps)
+                time_color += num
+
+        print(f'------------------------------')
+        print(f'Color: {color}: {time_color}s')
+        for shape, slot_dict in shapes_dict.items():
+            for slot, num in slot_dict.items():
+                print(f'Shape: {shape} ({slot}): {num}s')

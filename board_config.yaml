@@ -2,6 +2,7 @@
 # First coordinate is the column second is the row
 
 board_size: [8,5]
+board_size_mm: [312,195]
 board_config:
   '0,0': ['yellow', 'square', False]
   '1,0': ['green', 'hexagon', False]
