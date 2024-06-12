@@ -8,20 +8,23 @@ import cv2 as cv
 import numpy as np
 from sklearn.decomposition import PCA
 
-from src.image_correction import initCalibrationData, correctImage, correctCoordinates, reverseCoordinates
-from src.load_board_config import getBoardData, projectBoardMatrix, projectBoardConfig, getCellIndex
-from src.detect_shapes import detectBoardContour, detectColorSquares, isSlot
-from src.display_mosaic import imshowMosaic
+from src.BoardHandler import BoardHandler
+from src.DistortionHandler import DistortionHandler
+from src.utils import imshowMosaic
+
+from src.detect_shapes import detectColorSquares, isSlot
+
 
 # Hue in degrees (0-360); epsilon in degrees too
-color_dict = {'red':    {'h': 350,   'eps': 29}, 
+colors_dict = {'red':    {'h': 350,   'eps': 29}, 
               'green':  {'h': 125, 'eps': 35}, 
               'blue':   {'h': 220, 'eps': 35},
               'yellow': {'h': 50,  'eps': 28}}
 
 colors_list = {'red': (0,0,255), 'green': (0,255,0), 'blue': (255,0,0), 'yellow': (0,255,255), 'black': (255,255,0)}
 
-WINDOW_STREAM = '(W1) Video'
+WINDOW_STREAM_CAMERA = 'Camera View'
+WINDOW_STREAM_BOARD = 'Board View'
 video_path = './data/world_cut.mp4'
 fixations_data_path = './data/fixations_timestamps.npy'
 board_configuration='./board_config.yaml'
@@ -30,39 +33,19 @@ patternSize = (7,4)
 h_epsilon = 8
 
 
-cv.namedWindow(WINDOW_STREAM, cv.WINDOW_AUTOSIZE)
+cv.namedWindow(WINDOW_STREAM_CAMERA, cv.WINDOW_AUTOSIZE)
+cv.namedWindow(WINDOW_STREAM_BOARD, cv.WINDOW_AUTOSIZE)
 
 def mouse_callback(event, x, y, flags, param):
     if event == cv.EVENT_LBUTTONDOWN:
-        # Convertir la imagen a HSV
-        hsv_image = cv.cvtColor(capture, cv.COLOR_BGR2HSV_FULL)
-        
-        # Obtener los valores HSV del píxel
+        image = param
+        hsv_image = cv.cvtColor(image, cv.COLOR_BGR2HSV_FULL)
         h, s, v = hsv_image[y, x]
-        
         print(f'Hue: {int(h/255.0*360)}, Saturation: {s}, Value: {v}')
 
-cv.setMouseCallback(WINDOW_STREAM, mouse_callback)
+cv.setMouseCallback(WINDOW_STREAM_CAMERA, mouse_callback)
+cv.setMouseCallback(WINDOW_STREAM_BOARD, mouse_callback)
 
-
-# cv.namedWindow('yellow_mask', cv.WINDOW_AUTOSIZE)
-# cv.namedWindow('red_mask', cv.WINDOW_AUTOSIZE)
-# cv.namedWindow('green_mask', cv.WINDOW_AUTOSIZE)
-# cv.namedWindow('blue_mask', cv.WINDOW_AUTOSIZE)
-# cv.setMouseCallback('yellow_mask', mouse_callback)
-# cv.setMouseCallback('red_mask', mouse_callback)
-# cv.setMouseCallback('green_mask', mouse_callback)
-# cv.setMouseCallback('blue_mask', mouse_callback)
-
-def ComputePixelsPerMilimeters(approx_contour, real_width_mm, real_height_mm):
-    width_px = np.linalg.norm(approx_contour[0][0] - approx_contour[1][0])
-    height_px = np.linalg.norm(approx_contour[1][0] - approx_contour[2][0])
-    
-    pixels_per_mm_width = width_px / real_width_mm
-    pixels_per_mm_height = height_px / real_height_mm
-
-    pixels_per_mm = (pixels_per_mm_width + pixels_per_mm_height) / 2
-    return pixels_per_mm
 
 
 
@@ -140,19 +123,6 @@ def checkBoardMatch(contours, data_dict, board_size):
             print(f"Color does not match: {data['color'] = }; {data_dict[index][0] = }")
 
 
-def interpolar_puntos(contorno, num_puntos=10):
-    # Obtener las coordenadas x e y de las esquinas del contorno
-    x = contorno[:, 0, 0]
-    y = contorno[:, 0, 1]
-
-    # Crear un array de puntos interpolados entre las esquinas
-    puntos_interpolados = []
-    for i in range(len(x) - 1):
-        x_interpolados = np.linspace(x[i], x[i + 1], num_puntos)
-        y_interpolados = np.linspace(y[i], y[i + 1], num_puntos)
-        puntos_interpolados.extend(zip(x_interpolados, y_interpolados))
-
-    return np.array(puntos_interpolados)
 
 if __name__ == "__main__":
 
@@ -167,80 +137,60 @@ if __name__ == "__main__":
     frame_height = int(stream.get(cv.CAP_PROP_FRAME_HEIGHT))
     writer = cv.VideoWriter('./result.mp4', cv.VideoWriter_fourcc(*'mp4v'), fps, (frame_width, frame_height))
 
-    initCalibrationData(frame_height, frame_width, calibration_json = 'camera_calib.json')
-
-    board_size, board_size_mm, board_data_dict = getBoardData(board_configuration)
+    distortion_handler = DistortionHandler(calibration_json_path='camera_calib.json', 
+                                           frame_width=frame_width, frame_height=frame_height)
+    
+    board_handler = BoardHandler(board_cfg_path=board_configuration, colors_dict=colors_dict, 
+                                 colors_list=colors_list, distortion_handler=distortion_handler)
         
-    fixations = {}
+    board_metrics = {}
     while True:
-        ret, image = stream.read()
+        ret, original_image = stream.read()
         if not ret:
             print("Can't receive frame (stream end?). Exiting ...")
             break
         
-        # Distortion and perspective correction
-        capture, display_image = correctImage(capture=image.copy())
+        board_handler.step(original_image)
 
-        board_contour = detectBoardContour(capture, display_image)
-
-
+        ## FIXATION COORDINATES FOR THIS FRAME?
         # desnormalized_x = int(0.5 * capture.shape[0])
         # desnormalized_y = int(0.5 * capture.shape[1])
         # corrected_coord = correctCoordinates((desnormalized_x, desnormalized_y))[0][0]
-        corrected_coord = (int(random.random()*display_image.shape[0]), int(random.random()*display_image.shape[1]))
+        corrected_coord = np.array([(int(random.random()*board_handler.board_view.shape[0]), int(random.random()*board_handler.board_view.shape[1]))])
         
+        color, shape, slot = board_handler.getPixelInfo(corrected_coord)
 
-        if board_contour is not None and len(board_contour) != 0:
-            cell_matrix, cell_width, cell_height = projectBoardMatrix(board_contour, board_size, display_image = None)
-            board_data_dict = projectBoardConfig(cell_matrix, cell_width, cell_height, board_data_dict, display_image = None, colors_list=colors_list)
-            
+        board_view_cfg, board_view_detected = board_handler.getVisualization()
+        image_board_cfg, image_board_detected = board_handler.getUndistortedVisualization(original_image)
 
-            idx = getCellIndex(corrected_coord, cell_matrix, cell_width, cell_height)
-            if idx[0] is not None:
-                print(f"Fixation detected in: {board_data_dict[idx]}")
-                color = board_data_dict[idx][0]
-                shape = board_data_dict[idx][1]
-                slot = board_data_dict[idx][2]
+        # Update board metrics
+        if color is not None:
+            if color not in board_metrics:
+                board_metrics[color] = {shape: {True: 0, False: 0}}
+            if shape not in board_metrics[color]:
+                board_metrics[color][shape] = {True: 0, False: 0}
 
-                if color not in fixations:
-                    fixations[color] = {shape: {True: 0, False: 0}}
-                if shape not in fixations[color]:
-                    fixations[color][shape] = {True: 0, False: 0}
+            board_metrics[color][shape][slot] += 1
 
-                fixations[color][shape][slot] += 1
-                cv.circle(display_image, (int(corrected_coord[0]),int(corrected_coord[1])), radius=10, color=(0,0,255), thickness=-1)
+        def buildMosaic(titles_list, images_list, rows, cols, window_name, resize = 1):
+            for index, resized_image in enumerate(images_list):
+                images_list[index] = cv.resize(resized_image, (int(frame_width*resize), int(frame_height*resize)))
+
+            imshowMosaic(titles_list=titles_list, 
+                        images_list=images_list, 
+                        rows=rows, cols=cols, window_name=window_name)
         
-
-        ## Detection of squares and slots :)
-        # might be unnecesary
-        detected_board_data = []
-        contours_dict = detectColorSquares(capture, color_dict=color_dict, colors_list=colors_list, display_image=None)
-        for color, contour_list in contours_dict.items():
-            for contour in contour_list:
-                # print(f'Detect shape for {color} and contour {contour}')
-                is_slot, center = isSlot(capture, contour, color_dict[color], colors_list[color], display_image=None)
-                detected_board_data.append([is_slot, center])
-
-        cv.imshow(WINDOW_STREAM, display_image)
-
-
-        if board_contour is not None and len(board_contour) != 0:
-            board_contour_extended = interpolar_puntos(board_contour)
-            original_board_contour = reverseCoordinates(board_contour_extended).astype(np.int32)
-            cv.drawContours(image, [original_board_contour], -1, (255,255,0), 2)
-
-            original_coord = reverseCoordinates(np.array([(corrected_coord[0],corrected_coord[1])], dtype=np.float32))
-            cv.circle(image, (int(original_coord[0][0][0]),int(original_coord[0][0][1])), radius=10, color=(0,0,255), thickness=-1)
+        buildMosaic(titles_list=['Board Cfg', 'Board Detected'], 
+                     images_list=[board_view_cfg, board_view_detected], 
+                     rows=2, cols=1, window_name=WINDOW_STREAM_BOARD, resize = 1/2)
         
-        resized_image = cv.resize(image, (int(frame_width/2), int(frame_height/2)))
-        resized_frame = cv.resize(display_image, (int(frame_width/2), int(frame_height/2)))
-        imshowMosaic(titles_list=['Original', 'Processed'], 
-                     images_list=[resized_image, resized_frame], 
-                     rows=2, cols=1, window_name=WINDOW_STREAM)
+        buildMosaic(titles_list=['Complete Cfg', 'Complete Detected'], 
+                     images_list=[image_board_cfg, image_board_detected], 
+                     rows=2, cols=1, window_name=WINDOW_STREAM_CAMERA, resize = 1/2)
 
 
-        resized_frame = cv.resize(display_image, (frame_width, frame_height))
-        writer.write(resized_frame)
+        # resized_frame = cv.resize(display_image, (frame_width, frame_height))
+        # writer.write(resized_frame)
 
         # check keystroke to exit (image window must be on focus)
         key = cv.pollKey()
@@ -253,7 +203,7 @@ if __name__ == "__main__":
     cv.destroyAllWindows()
 
 
-    for color, shapes_dict in fixations.items():
+    for color, shapes_dict in board_metrics.items():
         time_color = 0
         for shape, slot_dict in shapes_dict.items():
             for slot, num in slot_dict.items():

@@ -6,8 +6,7 @@ import math
 import cv2 as cv
 import numpy as np
 
-from src.channel_utils import getMaskHue, claheEqualization
-from src.display_mosaic import imshowMosaic
+from src.utils import getMaskHue, claheEqualization, imshowMosaic
 
 def projectCenter(contour):
     center = None
@@ -62,32 +61,6 @@ def checkShape(contour, area_filter = [900,10000]):
     
     return None, approximate
 
-
-def detectBoardContour(image, display_image, color = (255,255,0)):
-    global margin_color
-
-    hue, sat, intensity = cv.split(cv.cvtColor(image, cv.COLOR_BGR2HSV_FULL))
-    # Take any hue with low brightness
-    res = getMaskHue(hue, sat, intensity, h_ref=0, h_epsilon=180, s_margins=[0,255], v_margins = [0,70])
-    # cv.imshow(f'border_mask', res)
-
-    edge_image = cv.Canny(res, threshold1=50, threshold2=200)
-    contours, hierarchy = cv.findContours(edge_image, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE)
-    
-    board_contour = None
-    # cv.imshow(f'border_edges', edge_image)
-    for contour in contours:
-        shape, approx = checkShape(contour, area_filter=[10000, math.inf])
-        if shape == 'rectangle':
-            board_contour = approx
-            if display_image is not None:
-                display_image = cv.drawContours(display_image, [board_contour], -1, color, 2)
-            break
-            
-            
-    # cv.imshow(f'border_edges', edge_image)
-    # cv.imshow(f'border_contour', display_image)
-    return board_contour
 
 
 def detectColorSquares(image, color_dict, colors_list, display_image):
