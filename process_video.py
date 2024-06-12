@@ -8,9 +8,10 @@ import cv2 as cv
 import numpy as np
 from sklearn.decomposition import PCA
 
-from src.image_correction import initCalibrationData, correctImage, correctCoordinates
+from src.image_correction import initCalibrationData, correctImage, correctCoordinates, reverseCoordinates
 from src.load_board_config import getBoardData, projectBoardMatrix, projectBoardConfig, getCellIndex
 from src.detect_shapes import detectBoardContour, detectColorSquares, isSlot
+from src.display_mosaic import imshowMosaic
 
 # Hue in degrees (0-360); epsilon in degrees too
 color_dict = {'red':    {'h': 350,   'eps': 29}, 
@@ -139,7 +140,19 @@ def checkBoardMatch(contours, data_dict, board_size):
             print(f"Color does not match: {data['color'] = }; {data_dict[index][0] = }")
 
 
+def interpolar_puntos(contorno, num_puntos=10):
+    # Obtener las coordenadas x e y de las esquinas del contorno
+    x = contorno[:, 0, 0]
+    y = contorno[:, 0, 1]
 
+    # Crear un array de puntos interpolados entre las esquinas
+    puntos_interpolados = []
+    for i in range(len(x) - 1):
+        x_interpolados = np.linspace(x[i], x[i + 1], num_puntos)
+        y_interpolados = np.linspace(y[i], y[i + 1], num_puntos)
+        puntos_interpolados.extend(zip(x_interpolados, y_interpolados))
+
+    return np.array(puntos_interpolados)
 
 if __name__ == "__main__":
 
@@ -160,24 +173,28 @@ if __name__ == "__main__":
         
     fixations = {}
     while True:
-        ret, capture = stream.read()
+        ret, image = stream.read()
         if not ret:
             print("Can't receive frame (stream end?). Exiting ...")
             break
         
         # Distortion and perspective correction
-        capture, display_image = correctImage(capture=capture)
+        capture, display_image = correctImage(capture=image.copy())
 
         board_contour = detectBoardContour(capture, display_image)
+
+
+        # desnormalized_x = int(0.5 * capture.shape[0])
+        # desnormalized_y = int(0.5 * capture.shape[1])
+        # corrected_coord = correctCoordinates((desnormalized_x, desnormalized_y))[0][0]
+        corrected_coord = (int(random.random()*display_image.shape[0]), int(random.random()*display_image.shape[1]))
+        
+
         if board_contour is not None and len(board_contour) != 0:
             cell_matrix, cell_width, cell_height = projectBoardMatrix(board_contour, board_size, display_image = None)
             board_data_dict = projectBoardConfig(cell_matrix, cell_width, cell_height, board_data_dict, display_image = None, colors_list=colors_list)
             
 
-            # desnormalized_x = int(0.5 * capture.shape[0])
-            # desnormalized_y = int(0.5 * capture.shape[1])
-            # corrected_coord = correctCoordinates((desnormalized_x, desnormalized_y))[0][0]
-            corrected_coord = (int(random.random()*display_image.shape[0]), int(random.random()*display_image.shape[1]))
             idx = getCellIndex(corrected_coord, cell_matrix, cell_width, cell_height)
             if idx[0] is not None:
                 print(f"Fixation detected in: {board_data_dict[idx]}")
@@ -205,6 +222,22 @@ if __name__ == "__main__":
                 detected_board_data.append([is_slot, center])
 
         cv.imshow(WINDOW_STREAM, display_image)
+
+
+        if board_contour is not None and len(board_contour) != 0:
+            board_contour_extended = interpolar_puntos(board_contour)
+            original_board_contour = reverseCoordinates(board_contour_extended).astype(np.int32)
+            cv.drawContours(image, [original_board_contour], -1, (255,255,0), 2)
+
+            original_coord = reverseCoordinates(np.array([(corrected_coord[0],corrected_coord[1])], dtype=np.float32))
+            cv.circle(image, (int(original_coord[0][0][0]),int(original_coord[0][0][1])), radius=10, color=(0,0,255), thickness=-1)
+        
+        resized_image = cv.resize(image, (int(frame_width/2), int(frame_height/2)))
+        resized_frame = cv.resize(display_image, (int(frame_width/2), int(frame_height/2)))
+        imshowMosaic(titles_list=['Original', 'Processed'], 
+                     images_list=[resized_image, resized_frame], 
+                     rows=2, cols=1, window_name=WINDOW_STREAM)
+
 
         resized_frame = cv.resize(display_image, (frame_width, frame_height))
         writer.write(resized_frame)

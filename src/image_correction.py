@@ -92,6 +92,24 @@ def correctCoordinates(original_coords):
 
     original_coord_np = np.array(original_coords, dtype=np.float32)
     undistorted_coord = cv.undistortPoints(original_coord_np, cameraMatrix, distCoeffs)
-    transformed_coord = cv.perspectiveTransform(undistorted_coord.reshape(-1, 1, 2), homography)
+    # transformed_coord = cv.perspectiveTransform(undistorted_coord.reshape(-1, 1, 2), homography)
 
-    return transformed_coord
+    return undistorted_coord
+
+"""
+
+"""
+def reverseCoordinates(transformed_coords):
+    global homography, cameraMatrix, distCoeffs
+    
+    transformed_coords = np.array(transformed_coords, dtype=np.float32)
+    undistorted_coord = cv.perspectiveTransform(transformed_coords.reshape(-1, 1, 2), np.linalg.inv(homography))
+
+    ptsOut = np.array(undistorted_coord, dtype='float32')
+    ptsTemp = np.array([], dtype='float32')
+    rtemp = ttemp = np.array([0,0,0], dtype='float32')
+    ptsOut = cv.undistortPoints(ptsOut, cameraMatrix, None)
+    ptsTemp = cv.convertPointsToHomogeneous( ptsOut )
+    projected_points, _ = cv.projectPoints( ptsTemp, rtemp, ttemp, cameraMatrix, distCoeffs, ptsOut )
+
+    return projected_points
