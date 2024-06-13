@@ -33,6 +33,9 @@ def getCellWH(cell_matrix, i, j):
 
     return w, h
 
+"""
+    Class that handles all the stuff needed to interface with the board game
+"""
 class BoardHandler:
 
     def __init__(self, board_cfg_path, colors_dict, colors_list, distortion_handler):
@@ -86,7 +89,7 @@ class BoardHandler:
                 for j in range(board_size[0]):
                     x, y = cell_matrix[i, j]
                     w,h = getCellWH(cell_matrix=cell_matrix, i=i, j=j)
-                    print(f'[{i},{j}] in {(x+5-w/2,y+12-h/2)}')
+                    # print(f'[{i},{j}] in {(x+5-w/2,y+12-h/2)}')
                     cv.putText(display_cfg_board_view, f'[{i},{j}]', org=(int(x+5-w/2),int(y+12-h/2)), fontFace=cv.FONT_HERSHEY_SIMPLEX, fontScale=0.3, color=(0, 255, 0), thickness=1, lineType=cv.LINE_AA)
         
         if self.display_configuration_slots_info and board_data_dict is not None \

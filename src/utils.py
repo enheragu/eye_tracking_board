@@ -8,6 +8,17 @@ import cv2 as cv
 import numpy as np
 
 
+def projectCenter(contour):
+    center = None
+    M = cv.moments(contour)
+    if M["m00"] != 0:
+        # Compute centroid coordinates
+        cX = int(M["m10"] / M["m00"])
+        cY = int(M["m01"] / M["m00"])
+        center_x = int((M['m10'] / M['m00']))
+        center_y = int((M['m01'] / M['m00']))
+        center = (center_x, center_y)
+    return center
 
 def interpolate_points(contorno, num_puntos=10):
     # Obtener las coordenadas x e y de las esquinas del contorno
@@ -22,6 +33,23 @@ def interpolate_points(contorno, num_puntos=10):
         puntos_interpolados.extend(zip(x_interpolados, y_interpolados))
 
     return np.array(puntos_interpolados)
+
+def draw_rotated_text(img, text, pos, angle, scale=1, color=(255, 0, 0), thickness=2):
+    font = cv.FONT_HERSHEY_SIMPLEX
+    size = cv.getTextSize(text, font, scale, thickness)[0]
+    
+    text_img = np.zeros((size[1] + 10, size[0] + 10, 3), dtype=np.uint8)
+    cv.putText(text_img, text, (5, size[1] + 5), font, scale, color, thickness, cv.LINE_AA)
+    
+    M = cv.getRotationMatrix2D((size[0] / 2 + 5, size[1] / 2 + 5), angle, 1)
+    rotated_img = cv.warpAffine(text_img, M, (size[0] + 10, size[1] + 10))
+    
+    x, y = pos
+    rows, cols, _ = rotated_img.shape
+    for i in range(rows):
+        for j in range(cols):
+            if np.any(rotated_img[i, j]):
+                img[y + i - rows // 2, x + j - cols // 2] = rotated_img[i, j]
 
 
 #####################

@@ -6,19 +6,9 @@ import math
 import cv2 as cv
 import numpy as np
 
-from src.utils import getMaskHue, claheEqualization, imshowMosaic
+from src.utils import getMaskHue, claheEqualization, imshowMosaic, projectCenter
 
-def projectCenter(contour):
-    center = None
-    M = cv.moments(contour)
-    if M["m00"] != 0:
-        # Compute centroid coordinates
-        cX = int(M["m10"] / M["m00"])
-        cY = int(M["m01"] / M["m00"])
-        center_x = int((M['m10'] / M['m00']))
-        center_y = int((M['m01'] / M['m00']))
-        center = (center_x, center_y)
-    return center
+
 
 
 def checkShape(contour, area_filter = [900,10000]):

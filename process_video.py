@@ -10,6 +10,7 @@ from sklearn.decomposition import PCA
 
 from src.BoardHandler import BoardHandler
 from src.DistortionHandler import DistortionHandler
+from src.PanelHandler import PanelHandler
 from src.utils import imshowMosaic
 
 from src.detect_shapes import detectColorSquares, isSlot
@@ -28,6 +29,7 @@ WINDOW_STREAM_BOARD = 'Board View'
 video_path = './data/world_cut.mp4'
 fixations_data_path = './data/fixations_timestamps.npy'
 board_configuration='./board_config.yaml'
+samples_configuration='./samples_config.yaml'
 
 patternSize = (7,4)
 h_epsilon = 8
@@ -142,7 +144,9 @@ if __name__ == "__main__":
     
     board_handler = BoardHandler(board_cfg_path=board_configuration, colors_dict=colors_dict, 
                                  colors_list=colors_list, distortion_handler=distortion_handler)
-        
+    
+    panel_handler = PanelHandler(panel_configuration_path=samples_configuration, colors_list=colors_list, distortion_handler=distortion_handler)
+    
     board_metrics = {}
     while True:
         ret, original_image = stream.read()
@@ -151,6 +155,7 @@ if __name__ == "__main__":
             break
         
         board_handler.step(original_image)
+        panel_handler.step(original_image)
 
         ## FIXATION COORDINATES FOR THIS FRAME?
         # desnormalized_x = int(0.5 * capture.shape[0])
@@ -162,6 +167,9 @@ if __name__ == "__main__":
 
         board_view_cfg, board_view_detected = board_handler.getVisualization()
         image_board_cfg, image_board_detected = board_handler.getUndistortedVisualization(original_image)
+
+        panel_view = panel_handler.getVisualization()
+        cv.imshow('arucos', panel_view)
 
         # Update board metrics
         if color is not None:
