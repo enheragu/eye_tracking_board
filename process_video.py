@@ -11,7 +11,7 @@ from sklearn.decomposition import PCA
 from src.BoardHandler import BoardHandler
 from src.DistortionHandler import DistortionHandler
 from src.PanelHandler import PanelHandler
-from src.utils import imshowMosaic
+from src.utils import buildMosaic
 
 from src.detect_shapes import detectColorSquares, isSlot
 
@@ -145,9 +145,14 @@ if __name__ == "__main__":
     board_handler = BoardHandler(board_cfg_path=board_configuration, colors_dict=colors_dict, 
                                  colors_list=colors_list, distortion_handler=distortion_handler)
     
-    panel_handler = PanelHandler(panel_configuration_path=samples_configuration, colors_list=colors_list, distortion_handler=distortion_handler)
+    panel_handler = PanelHandler(panel_configuration_path=samples_configuration, colors_dict=colors_dict,
+                                 colors_list=colors_list, distortion_handler=distortion_handler)
     
     board_metrics = {}
+
+
+    capture_idx = 120
+    stream.set(cv.CAP_PROP_POS_FRAMES, capture_idx)
     while True:
         ret, original_image = stream.read()
         if not ret:
@@ -169,7 +174,6 @@ if __name__ == "__main__":
         image_board_cfg, image_board_detected = board_handler.getUndistortedVisualization(original_image)
 
         panel_view = panel_handler.getVisualization()
-        cv.imshow('arucos', panel_view)
 
         # Update board metrics
         if color is not None:
@@ -180,19 +184,31 @@ if __name__ == "__main__":
 
             board_metrics[color][shape][slot] += 1
 
-        def buildMosaic(titles_list, images_list, rows, cols, window_name, resize = 1):
+        def imshowMosaic(titles_list, images_list, rows, cols, window_name, resize = 1):
             for index, resized_image in enumerate(images_list):
                 images_list[index] = cv.resize(resized_image, (int(frame_width*resize), int(frame_height*resize)))
 
-            imshowMosaic(titles_list=titles_list, 
+            mosaic = buildMosaic(titles_list=titles_list, 
                         images_list=images_list, 
-                        rows=rows, cols=cols, window_name=window_name)
+                        rows=rows, cols=cols)
+
+            text = f'Frame: {capture_idx}'
+            font = cv.FONT_HERSHEY_SIMPLEX
+            scale = 0.4
+            thickness = 1
+            text_size, _ = cv.getTextSize(text, font, scale, thickness)
+            text_width, text_height = text_size
+            x = mosaic.shape[1] - text_width - 1  # 10 pixel margin
+            y = text_height + 1  # 10 pixel margin
+            cv.putText(mosaic, text, (x, y), font, scale, (0,0,0), thickness)
+
+            cv.imshow(window_name, mosaic)
         
-        buildMosaic(titles_list=['Board Cfg', 'Board Detected'], 
-                     images_list=[board_view_cfg, board_view_detected], 
-                     rows=2, cols=1, window_name=WINDOW_STREAM_BOARD, resize = 1/2)
+        imshowMosaic(titles_list=['Board Cfg', 'Panel View', 'Board Detected'], 
+                     images_list=[board_view_cfg, panel_view, board_view_detected], 
+                     rows=2, cols=2, window_name=WINDOW_STREAM_BOARD, resize = 1/2)
         
-        buildMosaic(titles_list=['Complete Cfg', 'Complete Detected'], 
+        imshowMosaic(titles_list=['Complete Cfg', 'Complete Detected'], 
                      images_list=[image_board_cfg, image_board_detected], 
                      rows=2, cols=1, window_name=WINDOW_STREAM_CAMERA, resize = 1/2)
 
@@ -205,6 +221,8 @@ if __name__ == "__main__":
         # key = cv.waitKey(0)
         if key == ord('q') or key == ord('Q') or key == 27:
             break
+
+        capture_idx+=1
 
     if stream.isOpened():  stream.release()
     if writer.isOpened():  writer.release()

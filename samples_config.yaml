@@ -1,0 +1,13 @@
+
+# Sice of the sheet with the sample (same units)
+sample_sheet_size: [33,15]
+
+# Aruco position in the sheet from upper left corner (same units)
+aruco_position: [15,2]
+
+# Side size of the Aruco marker
+aruco_side: 3
+
+# Configuration of each marker with its associated shape
+marker_configuration:
+  - {id: 153, shape: 'hexagon', color: 'red'}

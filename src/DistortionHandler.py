@@ -6,8 +6,6 @@ import json
 import cv2 as cv
 import numpy as np
 
-from src.perspective_correction import margin_four_point_transform
-
 
 """
     Class that handles all the stuff related to distortion of the image, both from camera

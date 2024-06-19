@@ -10,7 +10,7 @@ import numpy as np
 import yaml
 from yaml.loader import SafeLoader
 
-from src.perspective_correction import margin_four_point_transform
+from src.perspective_correction import aruco_board_transform
 from src.utils import interpolate_points, getMaskHue, claheEqualization
 from src.detect_shapes import checkShape
 
@@ -163,9 +163,15 @@ class BoardHandler:
     def computeApplyHomography(self, image):
         board_contour = self.detectContour(image)
         if board_contour is not None:
-            # homography, warpedWidth, warpedHeight = four_point_transform(board_contour.reshape(4, 2))
-            self.homography, self.warpedWidth, self.warpedHeight = margin_four_point_transform(board_contour.reshape(4, 2), image.shape)
-            
+
+            # Uses detected board contour as if it were an aruco
+            board_image_contours = np.array([board_contour.reshape(4, 2)], dtype=np.float32)
+            self.homography, self.warpedWidth, self.warpedHeight = aruco_board_transform(
+                                    aruco_image_contours=board_image_contours,
+                                    aruco_3d_contours=self.board_corners_3d,
+                                    board_3d_contours=self.margin_points_3d,
+                                    img_shape=image.shape)
+
         if self.homography is not None:
             display_image = cv.warpPerspective(image, self.homography, (self.warpedWidth, self.warpedHeight))
 
@@ -200,6 +206,23 @@ class BoardHandler:
             board_data_dict = {tuple(map(int, key.split(','))): value for key, value in data['board_config'].items()}
             board_size = data['board_size']      
             board_size_mm = data['board_size_mm']
+
+            margin = 10 # in mm, same dimension as board_size
+            self.board_corners_3d = np.array([[
+                [margin, margin],                      # Esquina superior izquierda
+                [margin, board_size_mm[1]+margin],           # Esquina inferior izquierda
+                [board_size_mm[0]+margin, margin],           # Esquina superior derecha
+                [board_size_mm[0]+margin, board_size_mm[1]+margin] # Esquina inferior derecha
+            ]], dtype=np.float32)
+            
+
+            self.margin_points_3d = np.array([[
+                [0, 0],                                        # Esquina superior izquierda
+                [0, board_size_mm[1]+margin*2],                    # Esquina inferior izquierda
+                [board_size_mm[0]+margin*2, 0],                     # Esquina superior derecha
+                [board_size_mm[0]+margin*2, board_size_mm[1]+margin*2]  # Esquina inferior derecha
+            ]], dtype=np.float32)
+
         
         return board_size, board_size_mm, board_data_dict
     

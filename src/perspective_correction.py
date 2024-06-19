@@ -9,6 +9,15 @@ from scipy.spatial import distance as dist
 
 ## Other method has flaws. Adapted from: https://pyimagesearch.com/2016/03/21/ordering-coordinates-clockwise-with-python-and-opencv/
 def sort_points_clockwise(pts):
+
+    if pts.ndim == 2 and pts.shape[1] == 2: # a contour
+        pass
+    elif pts.ndim == 3 and pts.shape[2] == 2: # array of contours
+        contour_list = []
+        for contour in pts:
+            contour_list.append(sort_points_clockwise(contour))
+            return np.array(contour_list)
+            
     # sort the points based on their x-coordinates
     xSorted = pts[np.argsort(pts[:, 0]), :]
     leftMost = xSorted[:2, :]
@@ -28,86 +37,51 @@ def sort_points_clockwise(pts):
     (br, tr) = rightMost[np.argsort(D)[::-1], :]
     # return the coordinates in top-left, top-right,
     # bottom-right, and bottom-left order
-    return np.array([tl, tr, br, bl], dtype="float32")
+    ret = np.array([tl, tr, br, bl], dtype="float32")
+    return ret 
 
-## Adapted from: https://pyimagesearch.com/2014/08/25/4-point-opencv-getperspective-transform-example/
-def four_point_transform(pts):
-    pts = np.array(pts, dtype=np.float32)
 
-    rect = sort_points_clockwise(pts)
-    (tl, tr, br, bl) = rect
-    # compute the width  and height of the new image:
-    # maximum distance between bottom/right and bottom/left
-    widthA = np.sqrt(((br[0] - bl[0]) ** 2) + ((br[1] - bl[1]) ** 2))
-    widthB = np.sqrt(((tr[0] - tl[0]) ** 2) + ((tr[1] - tl[1]) ** 2))
-    maxWidth = max(int(widthA), int(widthB))
+"""
+    Given a set of 3d coordinates, reescale them with image_size
+    to matx expected image dimensions
+"""
+def rescale_3d_points(points, img_shape):
+
+    min_x, min_y = np.min(points, axis=0)
+    max_x, max_y = np.max(points, axis=0)
     
-    heightA = np.sqrt(((tr[0] - br[0]) ** 2) + ((tr[1] - br[1]) ** 2))
-    heightB = np.sqrt(((tl[0] - bl[0]) ** 2) + ((tl[1] - bl[1]) ** 2))
-    maxHeight = max(int(heightA), int(heightB))
-
-    # now that we have the dimensions of the new image, construct
-    # the set of destination points to obtain a "birds eye view",
-    # (i.e. top-down view) of the image, again specifying points
-    # in the top-left, top-right, bottom-right, and bottom-left
-    # order
+    scale_x = img_shape[0] / (max_x - min_x)
+    scale_y = img_shape[1] / (max_y - min_y)
     
-    dst = np.array([
-        [0, 0],
-        [maxWidth - 1, 0],
-        [maxWidth - 1, maxHeight - 1],
-        [0, maxHeight - 1]], dtype = "float32")
-    # compute the perspective transform matrix and then apply it
-    M = cv.getPerspectiveTransform(rect, dst)
-
-    return M, int(maxWidth), int(maxHeight)
-
-## Compute the four points transform of the points given an extra margin 
-# to add more info of the image
-def margin_four_point_transform(pts, img_shape = None, margin = 20):
-    pts = np.array(pts, dtype=np.float32)
-
-    M1, maxWidth, maxHeight = four_point_transform(pts)
-
-    margin_dst1 = np.array([
-        [-margin, -margin],
-        [maxWidth - 1 + margin, -margin],
-        [maxWidth - 1 + margin, maxHeight - 1 + margin],
-        [-margin, maxHeight - 1 + margin]], dtype = "float32")
+    # Scale with min to maintain square shapes as such
+    scale = min(scale_x, scale_y)
     
-    pts_2 = cv.perspectiveTransform(np.array([margin_dst1]), np.linalg.inv(M1))[0]
-    return four_point_transform(pts_2)
-
-## Compute transform for whole image based on given points
-def image_four_point_transform(pts, img_shape):
-    ## Corrects all image?¿
-    pts = np.array(pts, dtype=np.float32)
-
-    M1, maxWidth, maxHeight = four_point_transform(pts)
-    # new source: image corners
-    # Transform those new points
-    corners = np.array([[0, img_shape[0]],[0, 0],[img_shape[1], 0],[img_shape[1], img_shape[0]]])
-    corners = sort_points_clockwise(corners)
-    corners_tranformed = cv.perspectiveTransform(np.array([corners.astype("float32")]), M1)
+    points_scaled = (points - [min_x, min_y]) * scale
     
-    x_min = corners_tranformed[0][0][0]
-    y_min = corners_tranformed[0][0][1]
-    x_max = corners_tranformed[0][2][0]
-    y_max = corners_tranformed[0][2][1]
+    return points_scaled, np.max(points_scaled, axis=0).astype(np.int32)
+
+"""
+    returns:
+        Homograpy
+        new image shape based on recomputed dimensions once the board is projected
+"""
+def aruco_board_transform(aruco_image_contours, aruco_3d_contours, board_3d_contours, img_shape):
+    # M1 -> Transformation from 3d points aruco to image aruco coordinates
+    aruco_3d_contours = np.concatenate(sort_points_clockwise(aruco_3d_contours), axis=0).astype("float32")
+    aruco_image_contours = np.concatenate(sort_points_clockwise(aruco_image_contours), axis=0).astype("float32")
     
-    width = int(np.ceil(x_max - x_min))
-    height = int(np.ceil(y_max - y_min))
+    # Compute the perspective transform matrix and then apply it
+    # (¡makes use of list of points, not contours!)
+    M1, _ = cv.findHomography(aruco_3d_contours, aruco_image_contours)
 
-    adjusted_dst = np.array([
-        [0, 0],
-        [width - 1, 0],
-        [width - 1, height - 1],
-        [0, height - 1]], dtype="float32")
-    adjusted_dst = sort_points_clockwise(adjusted_dst)
-    print(f'{corners_tranformed = }')
-    print(f'{x_min = }; {y_min = }; {x_max = }; {y_max = }')
-    print(f'{width = }; {height = }')
-    print(f'{adjusted_dst = }')
+    # Take into account board coordinates to reescale undistorted aruco contours, 
+    # but then not include them into the homography as no board contour in image 
+    # is matched
+    all_points_3d = np.concatenate((aruco_3d_contours,board_3d_contours[0]), axis=0)
+    all_points_image_undistorted, (img_width, img_height) = rescale_3d_points(all_points_3d, img_shape)
+    aruco_3d_contours_undistorted = all_points_image_undistorted[:len(aruco_3d_contours)]
 
-    M2 = cv.getPerspectiveTransform(corners.astype("float32"),adjusted_dst.astype("float32"))
-    return M2, width, height
+    # Computes homopgraphy between all image points and its coorespondand undistorted computed versions
+    M2, _ = cv.findHomography(aruco_image_contours, aruco_3d_contours_undistorted)
+    
+    return M2, int(img_width), int(img_height)

@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 # encoding: utf-8
 
+import math
 import numpy as np
 import cv2 as cv
 import cv2.aruco
@@ -8,15 +9,15 @@ import cv2.aruco
 import yaml
 from yaml.loader import SafeLoader
 
-from src.utils import projectCenter, draw_rotated_text
-from src.perspective_correction import sort_points_clockwise, four_point_transform
+from src.utils import projectCenter, interpolate_points, getMaskHue
+from src.perspective_correction import aruco_board_transform, rescale_3d_points
 
 """
     Class that handles the detection, and fixations of the probe panel shown to the participant
     with the target piece to look for
 """
 class PanelHandler:
-    def __init__(self, panel_configuration_path, colors_list, distortion_handler):
+    def __init__(self, panel_configuration_path, colors_dict, colors_list, distortion_handler):
         
         self.distortion_handler = distortion_handler
         self.panel_data_dict = self.parseCFGPanelData(panel_configuration_path)
@@ -24,7 +25,9 @@ class PanelHandler:
         self.aruco_dictionary = cv.aruco.getPredefinedDictionary(cv.aruco.DICT_ARUCO_MIP_36H12)
 
         self.colors_list = colors_list
+        self.colors_dict = colors_dict
         self.detected_aruco = None
+        self.sample_contour = None
 
         self.homography = None
     
@@ -44,40 +47,24 @@ class PanelHandler:
                     break
         
         self.panel_view = self.computeApplyHomography(undistorted_image)
+        self.sample_contour = self.detectContour(self.panel_view)
         # self.panel_view = undistorted_image
 
     def computeApplyHomography(self, image):
-
-        display_image = np.zeros(image.shape)
+        
+        _, new_shape = rescale_3d_points(self.sheet_points_3d[0], image.shape)
+        display_image = np.zeros(new_shape, dtype=image.dtype)
     
         if self.detected_aruco is not None:
-            aruco_corners_image = sort_points_clockwise(self.detected_aruco['contour'].reshape(4, 2))
-            aruco_corners_image = np.array(aruco_corners_image, dtype=np.float32) 
-
-            # M0 is transformation between corners in image and corrected persective image
-            M0, _, _ = four_point_transform(aruco_corners_image, zero_coord=False)
-
-            # Position of aruco in sheet coordinates -> findhomography between aruco in sheet and in image
-            M1, _ = cv.findHomography(self.aruco_corners_3d, aruco_corners_image)
-
-            # Position of sheet in sheet coordinates -> find how these points translate to image
-            sheet_points_image = cv.perspectiveTransform(self.sheet_points_3d, M1)
-            sheet_points_image = np.array([sort_points_clockwise(sheet_points_image[0])]).astype("float32")
-            sheet_points_image = cv.perspectiveTransform(sheet_points_image, M0)
-            sheet_points_image = sort_points_clockwise(sheet_points_image[0]).astype("float32")
-
-            # findHomography between sheet and its computed projection in image
-            # self.homography = cv.getPerspectiveTransform(sheet_points_3d, sheet_points_image)
-            self.homography, _ = cv.findHomography(self.sheet_points_3d, sheet_points_image)
-
-            self.homography = M0
-            width, height = image.shape[1], image.shape[0]
-            display_image = cv.warpPerspective(image, self.homography, (width, height))
+            self.homography, self.warp_width, self.warp_height = aruco_board_transform(
+                                    aruco_image_contours=self.detected_aruco['contour'],
+                                    aruco_3d_contours=self.aruco_corners_3d,
+                                    board_3d_contours=self.sheet_points_3d,
+                                    img_shape=image.shape)
+            display_image = cv.warpPerspective(image, self.homography, (self.warp_width, self.warp_height))
             
-
         if self.homography is not None and self.detected_aruco is not None:
-            width, height = image.shape[1], image.shape[0]
-            display_image = cv.warpPerspective(image, self.homography, (width, height))
+            display_image = cv.warpPerspective(image, self.homography, (self.warp_width, self.warp_height))
 
         return display_image
 
@@ -90,45 +77,53 @@ class PanelHandler:
             aruco_position = data['aruco_position']
             aruco_side = data['aruco_side']
 
-            self.aruco_corners_3d = sort_points_clockwise(np.array([
+            self.aruco_corners_3d = np.array([[
                 [aruco_position[0], aruco_position[1]],                      # Esquina superior izquierda
                 [aruco_position[0], aruco_position[1]+aruco_side],           # Esquina inferior izquierda
                 [aruco_position[0]+aruco_side, aruco_position[1]],           # Esquina superior derecha
                 [aruco_position[0]+aruco_side, aruco_position[1]+aruco_side] # Esquina inferior derecha
-            ], dtype=np.float32))
+            ]], dtype=np.float32)
             
-            # M1 is transformation between aruco in 3d and aruco in image
-            self.aruco_corners_3d = np.array([self.aruco_corners_3d.astype("float32")])
 
-            self.sheet_points_3d = sort_points_clockwise(np.array([
+            self.sheet_points_3d = np.array([[
                 [0, 0],                                        # Esquina superior izquierda
                 [0, sample_sheet_size[1]],                    # Esquina inferior izquierda
                 [sample_sheet_size[0], 0],                     # Esquina superior derecha
                 [sample_sheet_size[0], sample_sheet_size[1]]  # Esquina inferior derecha
-            ], dtype=np.float32))
-            self.sheet_points_3d = np.array([self.sheet_points_3d.astype("float32")])
+            ]], dtype=np.float32)
+
         
         return panel_data_dict
 
-    def handleVisualization(self, image, aruco_data, aruco_corners, aruco_id):
+    def handleVisualization(self, image, aruco_data, sample_contour):
         display_cfg_panel_view = image.copy()
 
-        aruco_id = np.array([[self.detected_aruco['id']]])  # Convertir el id a array de NumPy 2D
-        aruco_corners = np.array(self.detected_aruco['contour'])  # Asegurarse de que los corners son un array de NumPy
-        cv.aruco.drawDetectedMarkers(display_cfg_panel_view, [aruco_corners], aruco_id, borderColor=(0,0,255))
+        corners, ids, rejectedImgPoints = cv.aruco.detectMarkers(display_cfg_panel_view, self.aruco_dictionary)
+        
+        cv.aruco.drawDetectedMarkers(display_cfg_panel_view, corners, ids, borderColor=(0,0,255))
 
-        center = projectCenter(aruco_corners)
-        x, y, width, height = cv.boundingRect(aruco_corners)
+        for index, aruco in enumerate(corners):
+            aruco_data_current = None
+            for aruco_data in self.panel_data_dict:
+                index_array = np.where(ids == aruco_data['id'])
+                if index_array[0].size > 0:
+                    index = index_array[0][0]
+                    aruco_data_current = aruco_data
+                    
+            if aruco_data_current is not None:
+                center = projectCenter(aruco)
+                x, y, width, height = cv.boundingRect(aruco)
 
-        text = f"Search for {aruco_data['color']} {aruco_data['shape']}"
-        color = self.colors_list[aruco_data['color']]
-        font = cv.FONT_HERSHEY_SIMPLEX
-        scale = 1
-        thickness = 1
-        text_size, _ = cv.getTextSize(f'{text}', font, scale, thickness)
-        text_origin = (int(center[0]-text_size[0]/2),int(center[1]+text_size[1]+3+height/2))
-        cv.putText(display_cfg_panel_view, text, org=text_origin, fontFace=font, fontScale=scale, color=color, thickness=thickness, lineType=cv.LINE_AA)
-                      
+                text = f"Search for {aruco_data_current['color']} {aruco_data_current['shape']}"
+                color = self.colors_list[aruco_data_current['color']]
+                font = cv.FONT_HERSHEY_SIMPLEX
+                scale = 1
+                thickness = 1
+                text_size, _ = cv.getTextSize(f'{text}', font, scale, thickness)
+                text_origin = (int(center[0]-text_size[0]/2),int(center[1]+text_size[1]+3+height/2))
+                cv.putText(display_cfg_panel_view, text, org=text_origin, fontFace=font, fontScale=scale, color=color, thickness=thickness, lineType=cv.LINE_AA)
+        
+                cv.drawContours(display_cfg_panel_view, [sample_contour], -1, color=color, thickness=2)
         # dx = aruco_corners[0][1][0] - aruco_corners[0][0][0]
         # dy = aruco_corners[0][1][1] - aruco_corners[0][0][1]
         # angle = np.degrees(np.arctan2(dy, dx))  
@@ -137,7 +132,31 @@ class PanelHandler:
 
     def getVisualization(self):
         if self.detected_aruco is not None:
-            return self.handleVisualization(self.panel_view, self.detected_aruco['data'], 
-                                            self.detected_aruco['contour'], self.detected_aruco['id'])
+            return self.handleVisualization(self.panel_view, self.panel_data_dict, self.sample_contour)
 
         return self.panel_view
+    
+    
+    def detectContour(self, image):
+        sample_contour = None
+        if self.detected_aruco is not None and image is not None:
+            h_ref = self.colors_dict[self.detected_aruco['data']['color']]
+
+            hue, sat, intensity = cv.split(cv.cvtColor(image, cv.COLOR_BGR2HSV_FULL))
+            res = getMaskHue(hue, sat, intensity, h_ref['h'], h_ref['eps'])
+
+            edge_image = cv.Canny(res, threshold1=50, threshold2=200)
+            contours, hierarchy = cv.findContours(edge_image, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE)
+            
+            for contour in contours:
+                perimeter = cv.arcLength(contour, True)
+                if not perimeter > 0.1:
+                    continue
+                
+                area = cv.contourArea(contour)
+                if area < 1000 or area > math.inf:
+                    continue
+                
+                sample_contour = cv.approxPolyDP(contour, .01 * perimeter, True)
+                
+        return sample_contour

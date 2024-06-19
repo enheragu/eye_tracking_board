@@ -88,11 +88,11 @@ def getMaskHue(hue, sat, intensity, h_ref, h_epsilon, s_margins = [5,255], v_mar
 
 
 
-#################################
-#   Debug mosaic imshow utils   #
-#################################
+################################
+#   Debug build mosaic utils   #
+################################
 
-def imshowMosaic(titles_list, images_list, rows, cols, window_name = None, margin = 10, margin_color=(255, 255, 255)):
+def buildMosaic(titles_list, images_list, rows, cols, margin = 15, margin_color=(255, 255, 255)):
     if len(images_list) != len(titles_list):
         raise ValueError("Number of titles and images provided to build mosaic do not match.")
 
@@ -124,7 +124,7 @@ def imshowMosaic(titles_list, images_list, rows, cols, window_name = None, margi
 
         mosaic[start_row:end_row, start_col:end_col] = img_with_title
 
-    cv.imshow(window_name, mosaic)
+    return mosaic
 
     
 def add_title(image, title):

@@ -6,7 +6,7 @@ import math
 import cv2 as cv
 import numpy as np
 
-from src.utils import getMaskHue, claheEqualization, imshowMosaic, projectCenter
+from src.utils import getMaskHue, claheEqualization, buildMosaic, projectCenter
 
 
 
@@ -81,7 +81,8 @@ def detectColorSquares(image, color_dict, colors_list, display_image):
         debug_mask[f'{color}_contour'] = edge_image
     
     if display_image is not None:
-        imshowMosaic(debug_mask.keys(), debug_mask.values(), 2, 2, 'Contour Masks')
+        mosaic = buildMosaic(debug_mask.keys(), debug_mask.values(), 2, 2)
+        cv.imshow('Contour Masks', mosaic)
     
     return contours_filtered
 
