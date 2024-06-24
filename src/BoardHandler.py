@@ -10,8 +10,9 @@ import numpy as np
 import yaml
 from yaml.loader import SafeLoader
 
-from src.perspective_correction import aruco_board_transform
-from src.utils import interpolate_points, getMaskHue, claheEqualization
+from src.ArucoBoardHandler import ArucoBoardHandler, aruco_board_transform
+
+from src.utils import interpolate_points, getMaskHue
 from src.detect_shapes import checkShape
 
 def getCellWH(cell_matrix, i, j):
@@ -38,13 +39,15 @@ def getCellWH(cell_matrix, i, j):
 """
 class BoardHandler:
 
-    def __init__(self, board_cfg_path, colors_dict, colors_list, distortion_handler):
+    def __init__(self, aruco_board_cfg_path, game_cfg_path, colors_dict, colors_list, distortion_handler):
 
         self.distortion_handler = distortion_handler
 
         self.colors_dict = colors_dict
         self.colors_list = colors_list
-        self.board_size, self.board_size_mm, self.board_data_dict = self.parseCFGBoardData(board_cfg_path)
+        self.color = self.colors_list['board']
+        self.aruco_board_handler = ArucoBoardHandler(aruco_board_cfg_path, self.colors_list, 'board')
+        self.board_size, self.board_size_mm, self.board_data_dict = self.parseCFGBoardData(game_cfg_path)
 
         self.undistorted_image = None
         self.board_view = None
@@ -80,11 +83,11 @@ class BoardHandler:
         display_detected_board_view = image.copy()
 
         if self.display_detected_board_contour and board_contour is not None:
-            cv.drawContours(display_detected_board_view, [board_contour], -1, color=(255,255,0), thickness=2)
+            cv.drawContours(display_detected_board_view, [board_contour], -1, color=self.color, thickness=2)
 
         if self.display_configuration_board_matrix and cell_matrix is not None \
            and cell_contours is not None:
-            cv.drawContours(display_cfg_board_view, cell_contours, -1, color=(255,255,0), thickness=2)
+            cv.drawContours(display_cfg_board_view, cell_contours, -1, color=self.color, thickness=2)
             for i in range(board_size[1]):
                 for j in range(board_size[0]):
                     x, y = cell_matrix[i, j]
@@ -160,20 +163,24 @@ class BoardHandler:
         # If cannot plot any data...
         return undistorted_image, undistorted_image
 
-    def computeApplyHomography(self, image):
-        board_contour = self.detectContour(image)
-        if board_contour is not None:
-
+    def computeApplyHomography(self, undistorted_image):
+        ## Version detecting contour of black edges of the game
+        # display_image = undistorted_image
+        # board_contour = self.detectContour(undistorted_image)
+        # if board_contour is not None: 
             # Uses detected board contour as if it were an aruco
-            board_image_contours = np.array([board_contour.reshape(4, 2)], dtype=np.float32)
-            self.homography, self.warpedWidth, self.warpedHeight = aruco_board_transform(
-                                    aruco_image_contours=board_image_contours,
-                                    aruco_3d_contours=self.board_corners_3d,
-                                    board_3d_contours=self.margin_points_3d,
-                                    img_shape=image.shape)
+            # board_image_contours = np.array([board_contour.reshape(4, 2)], dtype=np.float32)
+            # self.homography, self.warpedWidth, self.warpedHeight = aruco_board_transform(
+            #                         aruco_image_contours=board_image_contours,
+            #                         aruco_3d_contours=self.board_corners_3d,
+            #                         board_3d_contours=self.margin_points_3d,
+            #                         img_shape=undistorted_image.shape)
 
+        self.homography, self.warp_width, self.warp_height = self.aruco_board_handler.getTransform(undistorted_image)
+        display_image = np.zeros((self.warp_width, self.warp_height), dtype=undistorted_image.dtype)
+        
         if self.homography is not None:
-            display_image = cv.warpPerspective(image, self.homography, (self.warpedWidth, self.warpedHeight))
+            display_image = cv.warpPerspective(undistorted_image, self.homography, (self.warpedWidth, self.warpedHeight))
 
         return display_image
 
@@ -191,17 +198,18 @@ class BoardHandler:
                 color = self.board_data_dict[idx][0]
                 shape = self.board_data_dict[idx][1]
                 slot = self.board_data_dict[idx][2]
+                board_coord = idx
 
                 self.fixation_coord = coordinates
-                return color, shape, slot
+                return color, shape, slot, board_coord
         
         self.fixation_coord = None
-        return None, None, None
+        return None, None, None, None
 
     ## FUNCTIONS BASED ON CONFIGURATION
-    def parseCFGBoardData(self,board_configuration):
+    def parseCFGBoardData(self,game_configuration):
         board_data_dict = {}
-        with open(board_configuration) as file:
+        with open(game_configuration) as file:
             data = yaml.load(file, Loader=SafeLoader)
             board_data_dict = {tuple(map(int, key.split(','))): value for key, value in data['board_config'].items()}
             board_size = data['board_size']      
@@ -209,18 +217,18 @@ class BoardHandler:
 
             margin = 10 # in mm, same dimension as board_size
             self.board_corners_3d = np.array([[
-                [margin, margin],                      # Esquina superior izquierda
-                [margin, board_size_mm[1]+margin],           # Esquina inferior izquierda
-                [board_size_mm[0]+margin, margin],           # Esquina superior derecha
-                [board_size_mm[0]+margin, board_size_mm[1]+margin] # Esquina inferior derecha
+                [margin, margin, 0],                      # Esquina superior izquierda
+                [margin, board_size_mm[1]+margin, 0],           # Esquina inferior izquierda
+                [board_size_mm[0]+margin, margin, 0],           # Esquina superior derecha
+                [board_size_mm[0]+margin, board_size_mm[1]+margin, 0] # Esquina inferior derecha
             ]], dtype=np.float32)
             
 
             self.margin_points_3d = np.array([[
-                [0, 0],                                        # Esquina superior izquierda
-                [0, board_size_mm[1]+margin*2],                    # Esquina inferior izquierda
-                [board_size_mm[0]+margin*2, 0],                     # Esquina superior derecha
-                [board_size_mm[0]+margin*2, board_size_mm[1]+margin*2]  # Esquina inferior derecha
+                [0, 0, 0],                                        # Esquina superior izquierda
+                [0, board_size_mm[1]+margin*2, 0],                    # Esquina inferior izquierda
+                [board_size_mm[0]+margin*2, 0, 0],                     # Esquina superior derecha
+                [board_size_mm[0]+margin*2, board_size_mm[1]+margin*2, 0]  # Esquina inferior derecha
             ]], dtype=np.float32)
 
         

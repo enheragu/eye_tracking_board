@@ -22,14 +22,15 @@ colors_dict = {'red':    {'h': 350,   'eps': 29},
               'blue':   {'h': 220, 'eps': 35},
               'yellow': {'h': 50,  'eps': 28}}
 
-colors_list = {'red': (0,0,255), 'green': (0,255,0), 'blue': (255,0,0), 'yellow': (0,255,255), 'black': (255,255,0)}
+colors_list = {'red': (0,0,255), 'green': (0,255,0), 'blue': (255,0,0), 'yellow': (0,255,255), 'board': (255,255,0)}
 
 WINDOW_STREAM_CAMERA = 'Camera View'
 WINDOW_STREAM_BOARD = 'Board View'
 video_path = './data/world_cut.mp4'
 fixations_data_path = './data/fixations_timestamps.npy'
-board_configuration='./board_config.yaml'
-samples_configuration='./samples_config.yaml'
+game_configuration='./game_config.yaml'
+game_aruco_board_cfg='./game_aruco_board.yaml'
+samples_configuration='./sample_shape_cfg'
 
 patternSize = (7,4)
 h_epsilon = 8
@@ -142,7 +143,8 @@ if __name__ == "__main__":
     distortion_handler = DistortionHandler(calibration_json_path='camera_calib.json', 
                                            frame_width=frame_width, frame_height=frame_height)
     
-    board_handler = BoardHandler(board_cfg_path=board_configuration, colors_dict=colors_dict, 
+    board_handler = BoardHandler(aruco_board_cfg_path = game_aruco_board_cfg,
+                                 game_cfg_path=game_configuration, colors_dict=colors_dict, 
                                  colors_list=colors_list, distortion_handler=distortion_handler)
     
     panel_handler = PanelHandler(panel_configuration_path=samples_configuration, colors_dict=colors_dict,
@@ -151,7 +153,7 @@ if __name__ == "__main__":
     board_metrics = {}
 
 
-    capture_idx = 120
+    capture_idx = 135
     stream.set(cv.CAP_PROP_POS_FRAMES, capture_idx)
     while True:
         ret, original_image = stream.read()
@@ -168,7 +170,8 @@ if __name__ == "__main__":
         # corrected_coord = correctCoordinates((desnormalized_x, desnormalized_y))[0][0]
         corrected_coord = np.array([(int(random.random()*board_handler.board_view.shape[0]), int(random.random()*board_handler.board_view.shape[1]))])
         
-        color, shape, slot = board_handler.getPixelInfo(corrected_coord)
+        color, shape, slot, board_coord = board_handler.getPixelInfo(corrected_coord)
+        shape, aruco, panel = panel_handler.getPixelInfo(corrected_coord)
 
         board_view_cfg, board_view_detected = board_handler.getVisualization()
         image_board_cfg, image_board_detected = board_handler.getUndistortedVisualization(original_image)
@@ -180,7 +183,7 @@ if __name__ == "__main__":
             if color not in board_metrics:
                 board_metrics[color] = {shape: {True: 0, False: 0}}
             if shape not in board_metrics[color]:
-                board_metrics[color][shape] = {True: 0, False: 0}
+                board_metrics[colormp4][shape] = {True: 0, False: 0}
 
             board_metrics[color][shape][slot] += 1
 

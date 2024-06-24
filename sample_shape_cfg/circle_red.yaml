@@ -1,0 +1,14 @@
+
+# Mantain consistency of units!!
+board_position: [0,0,0]  # upper left corner (same units) (asume Z is constant in all board)
+board_size: [297,210]    # x,y size of the board
+
+# Side size of the Aruco marker
+aruco_side: 28.7
+
+# Configuration of each marker with its associated shape
+# Aruco position in the sheet from upper left corner (same units)
+# Asumes that z is constant in same aruco
+marker_configuration:
+  - {id: 153, position: [29.5,90,0]}
+  - {id: 170, position: [239.5,90,0]}
