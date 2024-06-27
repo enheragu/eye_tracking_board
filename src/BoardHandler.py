@@ -165,7 +165,7 @@ class BoardHandler:
 
     def computeApplyHomography(self, undistorted_image):
         ## Version detecting contour of black edges of the game
-        # display_image = undistorted_image
+        display_image = undistorted_image
         # board_contour = self.detectContour(undistorted_image)
         # if board_contour is not None: 
             # Uses detected board contour as if it were an aruco
@@ -177,7 +177,7 @@ class BoardHandler:
             #                         img_shape=undistorted_image.shape)
 
         self.homography, self.warp_width, self.warp_height = self.aruco_board_handler.getTransform(undistorted_image)
-        display_image = np.zeros((self.warp_width, self.warp_height), dtype=undistorted_image.dtype)
+        # display_image = np.zeros((self.warp_width, self.warp_height, 3), dtype=undistorted_image.dtype)
         
         if self.homography is not None:
             display_image = cv.warpPerspective(undistorted_image, self.homography, (self.warpedWidth, self.warpedHeight))

@@ -3,6 +3,7 @@
 # encoding: utf-8
 
 import math
+import copy
 
 import cv2 as cv
 import numpy as np
@@ -20,8 +21,9 @@ class ArucoBoardHandler:
         self.color = color
         self.shape = shape
 
-        self.aruco_dictionary = cv.aruco.getPredefinedDictionary(cv.aruco.DICT_ARUCO_MIP_36H12)
+        self.aruco_dictionary = cv.aruco.getPredefinedDictionary(cv.aruco.DICT_ARUCO_ORIGINAL)
         self.aruco_config, self.board_poinst_3d = self.parseCFGPanelData(arucoboard_cfg_path)
+        
 
     def parseCFGPanelData(self, arucoboard_cfg_path):
         aruco_3d_data = {}
@@ -38,19 +40,19 @@ class ArucoBoardHandler:
                 aruco_3d_data.append({})
                 aruco_3d_data[-1] = marker_cfg
                 aruco_3d_data[-1]['points_3d'] = np.array([
-                    [marker_cfg['position'][0], marker_cfg['position'][1], marker_cfg['position'][2]],                      # Esquina superior izquierda
-                    [marker_cfg['position'][0], marker_cfg['position'][1]+aruco_side, marker_cfg['position'][2]],           # Esquina inferior izquierda
-                    [marker_cfg['position'][0]+aruco_side, marker_cfg['position'][1], marker_cfg['position'][2]],           # Esquina superior derecha
-                    [marker_cfg['position'][0]+aruco_side, marker_cfg['position'][1]+aruco_side, marker_cfg['position'][2]] # Esquina inferior derecha
+                    [marker_cfg['position'][0], marker_cfg['position'][1]], #, marker_cfg['position'][2]],                      # Esquina superior izquierda
+                    [marker_cfg['position'][0], marker_cfg['position'][1]+aruco_side], #, marker_cfg['position'][2]],           # Esquina inferior izquierda
+                    [marker_cfg['position'][0]+aruco_side, marker_cfg['position'][1]], #, marker_cfg['position'][2]],           # Esquina superior derecha
+                    [marker_cfg['position'][0]+aruco_side, marker_cfg['position'][1]+aruco_side] #, marker_cfg['position'][2]] # Esquina inferior derecha
                 ], dtype=np.float32)
             
 
-            board_points_3d = np.array([[
-                [board_position[0], board_position[1], board_position[2]],                      # Esquina superior izquierda
-                [board_position[0], board_position[1]+board_size[1], board_position[2]],           # Esquina inferior izquierda
-                [board_position[0]+board_size[0], board_position[1], board_position[2]],           # Esquina superior derecha
-                [board_position[0]+board_size[0], board_position[1]+board_size[1], board_position[2]] # Esquina inferior derecha
-            ]], dtype=np.float32)
+            board_points_3d = np.array([
+                [board_position[0], board_position[1]], #, board_position[2]],                      # Esquina superior izquierda
+                [board_position[0], board_position[1]+board_size[1]], #, board_position[2]],           # Esquina inferior izquierda
+                [board_position[0]+board_size[0], board_position[1]], #, board_position[2]],           # Esquina superior derecha
+                [board_position[0]+board_size[0], board_position[1]+board_size[1]] #, board_position[2]] # Esquina inferior derecha
+            ], dtype=np.float32)
 
         
         return aruco_3d_data, board_points_3d
@@ -59,23 +61,34 @@ class ArucoBoardHandler:
         
         gray_image = cv.cvtColor(undistorted_frame, cv.COLOR_BGR2GRAY)  # transforms to gray level
         corners, ids, rejectedImgPoints = cv.aruco.detectMarkers(gray_image, self.aruco_dictionary)
+        # cv.aruco.drawDetectedMarkers(image=undistorted_frame, corners=corners, ids=ids, borderColor=(0,0,255))
+
+        criteria = (cv.TERM_CRITERIA_EPS + cv.TERM_CRITERIA_MAX_ITER, 30, 0.001)
+        for corner in corners:
+            cv.cornerSubPix(gray_image, corner, winSize=(5, 5), zeroZone=(-1, -1), criteria=criteria)
+
 
         detected_aruco_list = []
         if ids is not None and ids.size > 0:
-            for aruco_data in self.aruco_config:
-                index_array = np.where(ids == aruco_data['id'])
-                if index_array[0].size > 0:
-                    index = index_array[0][0]
-                    current_data = aruco_data.copy()
-                    current_data.update({'points_image': corners[index][0]})
-                    detected_aruco_list.append(current_data)
-                    break
+            for index, id in enumerate(ids):
+                found = False
+                for aruco_data in self.aruco_config:
+                    if id == aruco_data['id']:
+                        current_data = copy.deepcopy(aruco_data)
+                        current_data.update({'points_image': corners[index][0]})
+                        detected_aruco_list.append(current_data)
+                        found = True  # ID encontrado
+                        break
+                # if not found:
+                #     print(f"ID {id} not in configuration: {self.aruco_config}")
+        # else:
+        #     print("No ids found in image")
 
         return detected_aruco_list
 
     def getTransform(self, undistorted_frame):
         homography = None
-        _, (warp_width, warp_height, _) = rescale_3d_points(self.board_poinst_3d[0], undistorted_frame.shape)
+        _, (warp_width, warp_height) = rescale_3d_points(self.board_poinst_3d, undistorted_frame.shape)
         detected_aruco_list = self.detectArucos(undistorted_frame)
 
         
@@ -103,10 +116,10 @@ class ArucoBoardHandler:
         aruco_list = self.detectArucos(image)
             
         for aruco_data in aruco_list:
-            print(f'{aruco_data = }')
+            
             aruco_id = np.array([[aruco_data['id']]], dtype=np.int32)
             aruco_corners = aruco_data['points_image'].reshape((1, 4, 2))
-            # print(f'{aruco_corners.shape = }')
+            
             cv.aruco.drawDetectedMarkers(image=image, corners=[aruco_corners], ids=aruco_id, borderColor=(0,0,255))
 
             center = projectCenter(aruco_data['points_image'])
@@ -138,7 +151,7 @@ def sort_points_clockwise(pts):
         contour_list = []
         for contour in pts:
             contour_list.append(sort_points_clockwise(contour))
-            return np.array(contour_list)
+        return np.array(contour_list)
     
     # Handle 2D or 3D points by considering only the first two coordinates for sorting
     # pts_2d = pts[:, :2]
@@ -168,7 +181,7 @@ def sort_points_clockwise(pts):
 
 """
     Given a set of 3d coordinates, reescale them with image_size
-    to matx expected image dimensions
+    to match expected image dimensions
 """
 def rescale_3d_points(points, img_shape):
 
@@ -194,21 +207,36 @@ def rescale_3d_points(points, img_shape):
 """
 def aruco_board_transform(aruco_image_contours, aruco_3d_contours, board_3d_contours, img_shape):
     # M1 -> Transformation from 3d points aruco to image aruco coordinates
+
     aruco_3d_contours = np.concatenate(sort_points_clockwise(aruco_3d_contours), axis=0).astype("float32")
     aruco_image_contours = np.concatenate(sort_points_clockwise(aruco_image_contours), axis=0).astype("float32")
-    
-    # Compute the perspective transform matrix and then apply it
-    # (¡makes use of list of points, not contours!)
-    M1, _ = cv.findHomography(aruco_3d_contours, aruco_image_contours)
 
-    # Take into account board coordinates to reescale undistorted aruco contours, 
-    # but then not include them into the homography as no board contour in image 
-    # is matched
-    all_points_3d = np.concatenate((aruco_3d_contours,board_3d_contours[0]), axis=0)
-    all_points_image_undistorted, (img_width, img_height, _) = rescale_3d_points(all_points_3d, img_shape)
-    aruco_3d_contours_undistorted = all_points_image_undistorted[:len(aruco_3d_contours)]
+    # Compute the perspective transform matrix to transform between
+    # 3d contours to image contours
+    M1, _ = cv.findHomography(aruco_image_contours, aruco_3d_contours)
 
-    # Computes homopgraphy between all image points and its coorespondand undistorted computed versions
-    M2, _ = cv.findHomography(aruco_image_contours, aruco_3d_contours_undistorted)
+    board_image_contours = cv.perspectiveTransform(board_3d_contours.reshape(-1, 1, 2), np.linalg.inv(M1)).reshape(-1, 2)
+    board_image_contours = sort_points_clockwise(board_image_contours)
+
+    # Transform between board_image_points to new framed points
+    # _, (img_width, img_height) = rescale_3d_points(board_3d_contours, img_shape)
+    img_width, img_height = img_shape[1], img_shape[0]
+    image_points_framed = np.array([
+        [0, 0],
+        [img_width - 1, 0],
+        [img_width - 1, img_height - 1],
+        [0, img_height - 1]], dtype="float32")
+    image_points_framed = sort_points_clockwise(image_points_framed)
+    M2, _ = cv.findHomography(board_image_contours, image_points_framed)
+
+    # ## Take into account board coordinates to reescale undistorted aruco contours, 
+    # ## but then not include them into the homography as no board contour in image 
+    # ## is matched
+    # all_points_3d = np.concatenate((aruco_3d_contours,board_3d_contours), axis=0)
+    # all_points_image_undistorted, (img_width, img_height, _) = rescale_3d_points(all_points_3d, img_shape)
+    # aruco_3d_contours_undistorted = all_points_image_undistorted[:len(aruco_3d_contours)]
+
+    # ## Computes homopgraphy between all image points and its coorespondand undistorted computed versions
+    # M2, _ = cv.findHomography(aruco_image_contours, aruco_3d_contours_undistorted)
     
     return M2, int(img_width), int(img_height)

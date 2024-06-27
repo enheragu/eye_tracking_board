@@ -50,7 +50,7 @@ class PanelHandler:
                 self.last_detected = {'color': aruco_handler.color, 'shape': aruco_handler.shape}
                 break
 
-        display_image = np.zeros((self.warp_width, self.warp_height), dtype=undistorted_image.dtype)
+        display_image = np.zeros((self.warp_width, self.warp_height, 3), dtype=undistorted_image.dtype)
             
         if self.homography is not None and self.last_detected is not None:
             display_image = cv.warpPerspective(undistorted_image, self.homography, (self.warp_width, self.warp_height))
@@ -75,8 +75,8 @@ class PanelHandler:
         display_cfg_panel_view = image.copy()
 
         for panel_handler in self.panel_handler_list:
-            drawn = panel_handler.handleVisualization(image)
-            if drawn:
+            ret = panel_handler.handleVisualization(display_cfg_panel_view)
+            if ret:
                 color = self.colors_list[panel_handler.color]
                 cv.drawContours(display_cfg_panel_view, [shape_contour], -1, color=color, thickness=2)
         

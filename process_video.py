@@ -17,16 +17,17 @@ from src.detect_shapes import detectColorSquares, isSlot
 
 
 # Hue in degrees (0-360); epsilon in degrees too
-colors_dict = {'red':    {'h': 350,   'eps': 29}, 
-              'green':  {'h': 125, 'eps': 35}, 
-              'blue':   {'h': 220, 'eps': 35},
-              'yellow': {'h': 50,  'eps': 28}}
+colors_dict = {'red':    {'h': 350, 'eps': 29}, 
+               'green':  {'h': 125, 'eps': 35}, 
+               'blue':   {'h': 220, 'eps': 35},
+               'yellow': {'h': 50,  'eps': 28}}
 
 colors_list = {'red': (0,0,255), 'green': (0,255,0), 'blue': (255,0,0), 'yellow': (0,255,255), 'board': (255,255,0)}
 
 WINDOW_STREAM_CAMERA = 'Camera View'
 WINDOW_STREAM_BOARD = 'Board View'
-video_path = './data/world_cut.mp4'
+# video_path = './data/world_cut.mp4'
+video_path = '/home/quique/eeha/eyes_board_color/data/011-20240624T152508Z-001/011/world.mp4'
 fixations_data_path = './data/fixations_timestamps.npy'
 game_configuration='./game_config.yaml'
 game_aruco_board_cfg='./game_aruco_board.yaml'
@@ -127,9 +128,8 @@ def checkBoardMatch(contours, data_dict, board_size):
 
 
 
-if __name__ == "__main__":
 
-
+def processVideo(video_path):
     stream = cv.VideoCapture(video_path)
     if not stream.isOpened():
         print(f"Could not open video {video_path}")
@@ -153,8 +153,10 @@ if __name__ == "__main__":
     board_metrics = {}
 
 
-    capture_idx = 135
+    capture_idx = 2000
     stream.set(cv.CAP_PROP_POS_FRAMES, capture_idx)
+
+
     while True:
         ret, original_image = stream.read()
         if not ret:
@@ -183,7 +185,7 @@ if __name__ == "__main__":
             if color not in board_metrics:
                 board_metrics[color] = {shape: {True: 0, False: 0}}
             if shape not in board_metrics[color]:
-                board_metrics[colormp4][shape] = {True: 0, False: 0}
+                board_metrics[color][shape] = {True: 0, False: 0}
 
             board_metrics[color][shape][slot] += 1
 
@@ -216,8 +218,8 @@ if __name__ == "__main__":
                      rows=2, cols=1, window_name=WINDOW_STREAM_CAMERA, resize = 1/2)
 
 
-        # resized_frame = cv.resize(display_image, (frame_width, frame_height))
-        # writer.write(resized_frame)
+        resized_frame = cv.resize(original_image, (frame_width, frame_height))
+        writer.write(resized_frame)
 
         # check keystroke to exit (image window must be on focus)
         key = cv.pollKey()
@@ -244,3 +246,8 @@ if __name__ == "__main__":
         for shape, slot_dict in shapes_dict.items():
             for slot, num in slot_dict.items():
                 print(f'Shape: {shape} ({slot}): {num}s')
+
+
+
+if __name__ == "__main__":
+    processVideo(video_path)

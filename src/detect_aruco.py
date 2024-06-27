@@ -6,7 +6,7 @@ import cv2 as cv
 import cv2.aruco
 
 def drawArucos(capture):
-    dictionary = cv.aruco.getPredefinedDictionary(cv.aruco.DICT_ARUCO_MIP_36H12)
+    dictionary = cv.aruco.getPredefinedDictionary(cv.aruco.DICT_ARUCO_ORIGINAL)
     
     gray_image = cv.cvtColor(capture, cv.COLOR_BGR2GRAY)  # transforms to gray level
     corners, ids, rejectedImgPoints = cv.aruco.detectMarkers(gray_image, dictionary)
