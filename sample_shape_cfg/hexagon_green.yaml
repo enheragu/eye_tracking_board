@@ -1,7 +1,8 @@
 
 # Mantain consistency of units!!
-board_position: [0,0,0]  # upper left corner (same units) (asume Z is constant in all board)
-board_size: [297,210]    # x,y size of the board
+board_position: [5,5,0]  # upper left corner (same units) (asume Z is constant in all board)
+# board_size: [297,210]    # x,y size of the board
+board_size: [287,200]
 
 # Side size of the Aruco marker
 aruco_side: 28.7
