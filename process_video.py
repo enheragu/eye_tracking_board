@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 # encoding: utf-8
 
+import os
 import math
 import random
 
@@ -8,12 +9,13 @@ import cv2 as cv
 import numpy as np
 from sklearn.decomposition import PCA
 
+from src.utils import buildMosaic
+from src.detect_shapes import detectColorSquares, isSlot
+
 from src.BoardHandler import BoardHandler
 from src.DistortionHandler import DistortionHandler
 from src.PanelHandler import PanelHandler
-from src.utils import buildMosaic
-
-from src.detect_shapes import detectColorSquares, isSlot
+from src.EyeDataHandler import EyeDataHandler
 
 
 # Hue in degrees (0-360); epsilon in degrees too
@@ -27,8 +29,8 @@ colors_list = {'red': (0,0,255), 'green': (0,255,0), 'blue': (255,0,0), 'yellow'
 WINDOW_STREAM_CAMERA = 'Camera View'
 WINDOW_STREAM_BOARD = 'Board View'
 # video_path = './data/world_cut.mp4'
-video_path = '/home/quique/eeha/eyes_board_color/data/011-20240624T152508Z-001/011/world.mp4'
-fixations_data_path = './data/fixations_timestamps.npy'
+data_path = '/home/quique/eeha/eyes_board_color/data/011-20240624T152508Z-001/011/'
+video_path = os.path.join(data_path,'world.mp4')
 game_configuration='./game_config.yaml'
 game_aruco_board_cfg='./game_aruco_board.yaml'
 samples_configuration='./sample_shape_cfg'
@@ -150,6 +152,7 @@ def processVideo(video_path):
     panel_handler = PanelHandler(panel_configuration_path=samples_configuration, colors_dict=colors_dict,
                                  colors_list=colors_list, distortion_handler=distortion_handler)
     
+    eye_data_handler = EyeDataHandler(data_path, 'fixations')
     board_metrics = {}
 
 
@@ -250,4 +253,8 @@ def processVideo(video_path):
 
 
 if __name__ == "__main__":
+    stream = cv.VideoCapture(video_path)
+    frames = stream.get(cv.CAP_PROP_FRAME_COUNT)
+    print(f'{frames}')
+
     processVideo(video_path)

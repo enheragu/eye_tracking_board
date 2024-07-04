@@ -1,6 +1,10 @@
+wheel
 numpy
 opencv-python
 opencv-contrib-python
 PyYAML
-jsonlib
 scikit-learn
+
+## Pupil-labs .pldata handling
+rich
+msgpack>=1.0.0
