@@ -140,6 +140,9 @@ class ArucoBoardHandler:
             return False
 
     def getPixelInfo(self, coordinates):
+
+        if coordinates is not None:
+            pass
         pass
     
 ## Other method has flaws. Adapted from: https://pyimagesearch.com/2016/03/21/ordering-coordinates-clockwise-with-python-and-opencv/

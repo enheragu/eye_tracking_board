@@ -189,21 +189,26 @@ class BoardHandler:
         (if its in the board at all)
     """
     def getPixelInfo(self, coordinates):
-        if self.board_contour is not None and len(self.board_contour) != 0 \
+        self.fixation_coord = None
+        if coordinates is not None and self.board_contour is not None and len(self.board_contour) != 0 \
             and self.board_data_dict is not None:
-            idx = self.getCellIndex(coordinates[0])
+
+            self.fixation_coord = self.distortion_handler.correctCoordinates(coordinates, self.homography)[0]
+            coordinates
+            # print(f'Original coordinates: {coordinates = }')
+            # print(f'Fixation projected: {self.fixation_coord = }')
+            idx = self.getCellIndex(self.fixation_coord[0])
             
             if idx[0] is not None:
-                print(f"Fixation detected in: {self.board_data_dict[idx]}")
                 color = self.board_data_dict[idx][0]
                 shape = self.board_data_dict[idx][1]
                 slot = self.board_data_dict[idx][2]
                 board_coord = idx
 
                 self.fixation_coord = coordinates
+                # print(f"Fixation detected in: {self.board_data_dict[idx]} in {board_coord}")
                 return color, shape, slot, board_coord
         
-        self.fixation_coord = None
         return None, None, None, None
 
     ## FUNCTIONS BASED ON CONFIGURATION

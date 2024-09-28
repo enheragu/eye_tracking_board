@@ -29,7 +29,8 @@ colors_list = {'red': (0,0,255), 'green': (0,255,0), 'blue': (255,0,0), 'yellow'
 WINDOW_STREAM_CAMERA = 'Camera View'
 WINDOW_STREAM_BOARD = 'Board View'
 # video_path = './data/world_cut.mp4'
-data_path = '/home/quique/eeha/eyes_board_color/data/011-20240624T152508Z-001/011/'
+# data_path = '/home/quique/eeha/eyes_board_color/data/011-20240624T152508Z-001/011/'
+data_path = '/home/quique/eeha/eyes_board_color/data/000/'
 video_path = os.path.join(data_path,'world.mp4')
 game_configuration='./game_config.yaml'
 game_aruco_board_cfg='./game_aruco_board.yaml'
@@ -37,9 +38,10 @@ samples_configuration='./sample_shape_cfg'
 
 patternSize = (7,4)
 h_epsilon = 8
+init_capture_idx = 2160
 
 
-cv.namedWindow(WINDOW_STREAM_CAMERA, cv.WINDOW_AUTOSIZE)
+# cv.namedWindow(WINDOW_STREAM_CAMERA, cv.WINDOW_AUTOSIZE)
 cv.namedWindow(WINDOW_STREAM_BOARD, cv.WINDOW_AUTOSIZE)
 
 def mouse_callback(event, x, y, flags, param):
@@ -49,8 +51,8 @@ def mouse_callback(event, x, y, flags, param):
         h, s, v = hsv_image[y, x]
         print(f'Hue: {int(h/255.0*360)}, Saturation: {s}, Value: {v}')
 
-cv.setMouseCallback(WINDOW_STREAM_CAMERA, mouse_callback)
-cv.setMouseCallback(WINDOW_STREAM_BOARD, mouse_callback)
+# cv.setMouseCallback(WINDOW_STREAM_CAMERA, mouse_callback)
+# cv.setMouseCallback(WINDOW_STREAM_BOARD, mouse_callback)
 
 
 
@@ -132,6 +134,8 @@ def checkBoardMatch(contours, data_dict, board_size):
 
 
 def processVideo(video_path):
+    global init_capture_idx
+
     stream = cv.VideoCapture(video_path)
     if not stream.isOpened():
         print(f"Could not open video {video_path}")
@@ -155,10 +159,8 @@ def processVideo(video_path):
     eye_data_handler = EyeDataHandler(data_path, 'fixations')
     board_metrics = {}
 
-
-    capture_idx = 2000
+    capture_idx = init_capture_idx
     stream.set(cv.CAP_PROP_POS_FRAMES, capture_idx)
-
 
     while True:
         ret, original_image = stream.read()
@@ -166,22 +168,22 @@ def processVideo(video_path):
             print("Can't receive frame (stream end?). Exiting ...")
             break
         
+        norm_coord = eye_data_handler.step(capture_idx)
+        desnormalized_coord = None
+        if norm_coord is not None:
+            print(f'{capture_idx =}')
+            desnormalized_x = int(norm_coord[0] * original_image.shape[1])
+            desnormalized_y = int(norm_coord[1] * original_image.shape[0])
+            desnormalized_coord = np.array([[desnormalized_x, desnormalized_y]])
+
+        print(f'{norm_coord = }')
+        print(f'{desnormalized_coord = }')
+
         board_handler.step(original_image)
         panel_handler.step(original_image)
 
-        ## FIXATION COORDINATES FOR THIS FRAME?
-        # desnormalized_x = int(0.5 * capture.shape[0])
-        # desnormalized_y = int(0.5 * capture.shape[1])
-        # corrected_coord = correctCoordinates((desnormalized_x, desnormalized_y))[0][0]
-        corrected_coord = np.array([(int(random.random()*board_handler.board_view.shape[0]), int(random.random()*board_handler.board_view.shape[1]))])
-        
-        color, shape, slot, board_coord = board_handler.getPixelInfo(corrected_coord)
-        shape, aruco, panel = panel_handler.getPixelInfo(corrected_coord)
-
-        board_view_cfg, board_view_detected = board_handler.getVisualization()
-        image_board_cfg, image_board_detected = board_handler.getUndistortedVisualization(original_image)
-
-        panel_view = panel_handler.getVisualization()
+        color, shape, slot, board_coord = board_handler.getPixelInfo(desnormalized_coord)
+        shape, aruco, panel = panel_handler.getPixelInfo(desnormalized_coord)
 
         # Update board metrics
         if color is not None:
@@ -191,6 +193,18 @@ def processVideo(video_path):
                 board_metrics[color][shape] = {True: 0, False: 0}
 
             board_metrics[color][shape][slot] += 1
+            
+
+        board_view_cfg, board_view_detected = board_handler.getVisualization()
+        image_board_cfg, image_board_detected = board_handler.getUndistortedVisualization(original_image)
+
+        panel_view = panel_handler.getVisualization()
+
+        if norm_coord is not None:
+            cv.circle(image_board_cfg, desnormalized_coord[0], radius=10, color=(0,255,0), thickness=-1)
+            cv.circle(image_board_detected, desnormalized_coord[0], radius=10, color=(0,255,0), thickness=-1)
+            # cv.imshow(WINDOW_STREAM_CAMERA, original_image)
+
 
         def imshowMosaic(titles_list, images_list, rows, cols, window_name, resize = 1):
             for index, resized_image in enumerate(images_list):
@@ -212,13 +226,18 @@ def processVideo(video_path):
 
             cv.imshow(window_name, mosaic)
         
-        imshowMosaic(titles_list=['Board Cfg', 'Panel View', 'Board Detected'], 
-                     images_list=[board_view_cfg, panel_view, board_view_detected], 
-                     rows=2, cols=2, window_name=WINDOW_STREAM_BOARD, resize = 1/2)
+        # imshowMosaic(titles_list=['Board Cfg', 'Panel View', 'Board Detected'], 
+        #              images_list=[board_view_cfg, panel_view, board_view_detected], 
+        #              rows=2, cols=2, window_name=WINDOW_STREAM_BOARD, resize = 1/2)
         
-        imshowMosaic(titles_list=['Complete Cfg', 'Complete Detected'], 
-                     images_list=[image_board_cfg, image_board_detected], 
-                     rows=2, cols=1, window_name=WINDOW_STREAM_CAMERA, resize = 1/2)
+        # imshowMosaic(titles_list=['Complete Cfg', 'Complete Detected'], 
+        #              images_list=[image_board_cfg, image_board_detected], 
+        #              rows=2, cols=1, window_name=WINDOW_STREAM_CAMERA, resize = 1/2)
+
+        imshowMosaic(titles_list=['Complete Cfg', 'Board Cfg', 'Panel View', 'Complete Detected', 'Board Detected'], 
+                     images_list=[image_board_cfg, board_view_cfg, panel_view, image_board_detected, board_view_detected], 
+                     rows=2, cols=3, window_name=WINDOW_STREAM_BOARD, resize = 2/5)
+        
 
 
         resized_frame = cv.resize(original_image, (frame_width, frame_height))
@@ -226,16 +245,19 @@ def processVideo(video_path):
 
         # check keystroke to exit (image window must be on focus)
         key = cv.pollKey()
-        # key = cv.waitKey(0)
+
+        # if norm_coord is not None:
+        #     key = cv.waitKey(0)
+
         if key == ord('q') or key == ord('Q') or key == 27:
             break
 
         capture_idx+=1
 
+
     if stream.isOpened():  stream.release()
     if writer.isOpened():  writer.release()
     cv.destroyAllWindows()
-
 
     for color, shapes_dict in board_metrics.items():
         time_color = 0

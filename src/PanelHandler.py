@@ -115,6 +115,9 @@ class PanelHandler:
     
 
     def getPixelInfo(self, coordinates):
+
+        if coordinates is not None:
+            pass
         shape, aruco, panel = False, False, False
         
         return shape, aruco, panel
