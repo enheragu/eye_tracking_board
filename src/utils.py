@@ -92,7 +92,7 @@ def getMaskHue(hue, sat, intensity, h_ref, h_epsilon, s_margins = [5,255], v_mar
 #   Debug build mosaic utils   #
 ################################
 
-def buildMosaic(titles_list, images_list, rows, cols, margin = 15, margin_color=(255, 255, 255)):
+def buildMosaic(titles_list, images_list, debug_data_list, rows, cols, margin = 15, margin_color=(255, 255, 255)):
     if len(images_list) != len(titles_list):
         raise ValueError("Number of titles and images provided to build mosaic do not match.")
 
@@ -106,7 +106,7 @@ def buildMosaic(titles_list, images_list, rows, cols, margin = 15, margin_color=
     # Crear el mosaico con el color de margen especificado
     mosaic = np.full((mosaic_height, mosaic_width, 3), margin_color, dtype=np.uint8)
 
-    for i, (title, img) in enumerate(zip(titles_list, images_list)):
+    for i, (title, img, debug_data) in enumerate(zip(titles_list, images_list, debug_data_list)):
         row = i // cols
         col = i % cols
         start_row = row * (max_height + margin) + margin
@@ -121,6 +121,7 @@ def buildMosaic(titles_list, images_list, rows, cols, margin = 15, margin_color=
 
         resized_img = resize_with_black_padding(img, (end_col - start_col, end_row - start_row))
         img_with_title = add_title(resized_img, title)
+        img_with_title = add_debug_data(img_with_title, debug_data)
 
         mosaic[start_row:end_row, start_col:end_col] = img_with_title
 
@@ -134,6 +135,20 @@ def add_title(image, title):
     cv.putText(img_with_title, title, (10, 30), cv.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2, cv.LINE_AA)
     return img_with_title
 
+
+def add_debug_data(image, debug_data):
+    img_with_data = image.copy()
+    if debug_data is not None:
+        for index, text in enumerate(debug_data):
+            font = cv.FONT_HERSHEY_SIMPLEX
+            scale = 0.4
+            thickness = 1
+            text_size, _ = cv.getTextSize(text, font, scale, thickness)
+            text_width, text_height = text_size
+            x = 10
+            y = 60 + text_height + (10 + text_height)*index
+            cv.putText(img_with_data, text, (x, y), font, scale, (255,255,0), thickness)
+    return img_with_data
 
 def resize_with_black_padding(image, new_size):
     h, w = image.shape[:2]
@@ -155,3 +170,29 @@ def resize_with_black_padding(image, new_size):
     padded_img[y_offset:y_offset + new_h, x_offset:x_offset + new_w] = resized_img
 
     return padded_img
+
+
+def getMosaic(capture_idx, frame_width, frame_height, titles_list, images_list, rows, cols, resize = 1, debug_data_list = None):
+
+    if debug_data_list is None:
+        debug_data_list = [None*len(images_list)]
+
+    for index, resized_image in enumerate(images_list):
+        images_list[index] = cv.resize(resized_image, (int(frame_width*resize), int(frame_height*resize)))
+
+    mosaic = buildMosaic(titles_list=titles_list, 
+                images_list=images_list, 
+                rows=rows, cols=cols,
+                debug_data_list=debug_data_list)
+
+    text = f'Frame: {capture_idx}'
+    font = cv.FONT_HERSHEY_SIMPLEX
+    scale = 0.4
+    thickness = 1
+    text_size, _ = cv.getTextSize(text, font, scale, thickness)
+    text_width, text_height = text_size
+    x = mosaic.shape[1] - text_width - 1  # 10 pixel margin
+    y = text_height + 1  # 10 pixel margin
+    cv.putText(mosaic, text, (x, y), font, scale, (0,0,0), thickness)
+
+    return mosaic

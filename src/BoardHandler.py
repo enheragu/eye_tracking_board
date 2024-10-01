@@ -66,6 +66,8 @@ class BoardHandler:
         self.board_contour = None
         self.fixation_coord = None
         self.cell_contours = None
+
+        self.cell_matrix, self.cell_width, self.cell_height = None, None, None
         
         
     def step(self, image):
@@ -77,6 +79,7 @@ class BoardHandler:
         if self.board_contour is not None and len(self.board_contour) != 0:
             self.cell_matrix, self.cell_width, self.cell_height = self.computeBoardMatrix(self.board_contour, self.board_size)
             self.board_data_dict = self.completeBoardConfig(self.cell_matrix, self.cell_width, self.cell_height, self.board_data_dict)
+        
 
     def handleVisualization(self, image, board_contour, board_size, cell_matrix, cell_contours, board_data_dict, fixation_coord):
         display_cfg_board_view = image.copy()
@@ -123,7 +126,10 @@ class BoardHandler:
     
         return display_cfg_board_view, display_detected_board_view
     
-    def getVisualization(self):
+    def getVisualization(self, original_image):
+        if self.board_view is None:
+            return original_image, original_image
+        
         return self.handleVisualization(
             image=self.board_view,
             board_contour=self.board_contour, 
@@ -296,7 +302,7 @@ class BoardHandler:
     def detectContour(self, image):
         hue, sat, intensity = cv.split(cv.cvtColor(image, cv.COLOR_BGR2HSV_FULL))
         # Take any hue with low brightness
-        res = getMaskHue(hue, sat, intensity, h_ref=0, h_epsilon=180, s_margins=[0,255], v_margins = [0,70])
+        res = getMaskHue(hue, sat, intensity, h_ref=0, h_epsilon=180, s_margins=[0,255], v_margins = [0,90])
         # cv.imshow(f'border_mask', res)
 
         edge_image = cv.Canny(res, threshold1=50, threshold2=200)
@@ -314,6 +320,9 @@ class BoardHandler:
         # cv.imshow(f'border_contour', display_image)
         return board_contour
     
+    def isContourDetected(self):
+        return True if self.board_contour is not None else False
+
     def detectSlots(self, image):
         pass
         ## Detection of squares and slots :)

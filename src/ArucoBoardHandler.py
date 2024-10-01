@@ -14,6 +14,47 @@ from yaml.loader import SafeLoader
 
 from src.utils import projectCenter
 
+
+"""
+    Based on aruco markers detected, take white pixels and average the color correction
+"""
+def ARUCOColorCorrection(input_img):
+    aruco_dictionary = cv.aruco.getPredefinedDictionary(cv.aruco.DICT_ARUCO_ORIGINAL)
+    corners, ids, rejectedImgPoints = cv.aruco.detectMarkers(input_img, aruco_dictionary)
+
+    if ids is None:
+        return input_img
+    
+    white_pixels = []
+    for index, id in enumerate(ids):
+        corner = corners[index][0]
+        mask = np.zeros(input_img.shape[:2], dtype=np.uint8)
+        cv.fillConvexPoly(mask, np.int32(corner), 255)
+        white_pixels.append(input_img[mask == 255])
+
+    white_pixels = np.concatenate(white_pixels, axis=0)
+    average_white = np.mean(white_pixels, axis=0)
+
+    # Takes all aruco, set tone to be average grey as if aruco had same white and black pixels...
+    corrected_image = input_img*((255.0/2)/average_white)
+    corrected_image = np.clip(corrected_image,0,255).astype(np.uint8)
+
+    ## Noise reduction
+    corrected_image = cv.bilateralFilter(corrected_image, d=9, sigmaColor=75, sigmaSpace=75)
+
+    ## Adjust brightness
+    gray = cv.cvtColor(corrected_image, cv.COLOR_BGR2GRAY)
+    current_brightness = np.mean(gray)
+    current_contrast = np.std(gray)
+    expected_brightness = 190
+    expected_contrast = 70
+    alpha = expected_contrast/current_contrast # Contrast (more contrast alpha>1)
+    beta = expected_brightness - current_brightness # brightness
+    corrected_image = cv.convertScaleAbs(corrected_image, alpha=alpha, beta=beta)
+
+    return corrected_image
+
+
 class ArucoBoardHandler:
     def __init__(self, arucoboard_cfg_path, colors_list, color, shape = ''):
 

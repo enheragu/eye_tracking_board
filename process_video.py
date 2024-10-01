@@ -9,13 +9,14 @@ import cv2 as cv
 import numpy as np
 from sklearn.decomposition import PCA
 
-from src.utils import buildMosaic
 from src.detect_shapes import detectColorSquares, isSlot
 
 from src.BoardHandler import BoardHandler
 from src.DistortionHandler import DistortionHandler
 from src.PanelHandler import PanelHandler
 from src.EyeDataHandler import EyeDataHandler
+from src.ArucoBoardHandler import ARUCOColorCorrection
+from src.StateMachineHandler import StateMachine
 
 
 # Hue in degrees (0-360); epsilon in degrees too
@@ -30,29 +31,34 @@ WINDOW_STREAM_CAMERA = 'Camera View'
 WINDOW_STREAM_BOARD = 'Board View'
 # video_path = './data/world_cut.mp4'
 # data_path = '/home/quique/eeha/eyes_board_color/data/011-20240624T152508Z-001/011/'
-data_path = '/home/quique/eeha/eyes_board_color/data/000/'
+data_path = '/home/quique/eeha/eyes_board_color/data/0001/'
 video_path = os.path.join(data_path,'world.mp4')
 game_configuration='./game_config.yaml'
 game_aruco_board_cfg='./game_aruco_board.yaml'
 samples_configuration='./sample_shape_cfg'
+eye_data_topic = 'fixations'
 
 patternSize = (7,4)
 h_epsilon = 8
-init_capture_idx = 2160
+init_capture_idx = 5600
 
 
 # cv.namedWindow(WINDOW_STREAM_CAMERA, cv.WINDOW_AUTOSIZE)
 cv.namedWindow(WINDOW_STREAM_BOARD, cv.WINDOW_AUTOSIZE)
 
+mouse_callback_image = None
 def mouse_callback(event, x, y, flags, param):
-    if event == cv.EVENT_LBUTTONDOWN:
-        image = param
+    global mouse_callback_image
+    if event == cv.EVENT_LBUTTONDOWN and mouse_callback_image is not None:
+        image = mouse_callback_image
         hsv_image = cv.cvtColor(image, cv.COLOR_BGR2HSV_FULL)
         h, s, v = hsv_image[y, x]
         print(f'Hue: {int(h/255.0*360)}, Saturation: {s}, Value: {v}')
+    if event == cv.EVENT_LBUTTONDOWN and mouse_callback_image is None:
+        print(f'No image provided to detect HSV components.')
 
 # cv.setMouseCallback(WINDOW_STREAM_CAMERA, mouse_callback)
-# cv.setMouseCallback(WINDOW_STREAM_BOARD, mouse_callback)
+cv.setMouseCallback(WINDOW_STREAM_BOARD, mouse_callback)
 
 
 
@@ -134,16 +140,17 @@ def checkBoardMatch(contours, data_dict, board_size):
 
 
 def processVideo(video_path):
-    global init_capture_idx
+    global init_capture_idx, mouse_callback_image
 
     stream = cv.VideoCapture(video_path)
     if not stream.isOpened():
         print(f"Could not open video {video_path}")
         exit()
-        
+
     fps = stream.get(cv.CAP_PROP_FPS)
     frame_width = int(stream.get(cv.CAP_PROP_FRAME_WIDTH))
     frame_height = int(stream.get(cv.CAP_PROP_FRAME_HEIGHT))
+    print(f"Processing video of {fps} FPS and {frame_width = }; {frame_height = }")
     writer = cv.VideoWriter('./result.mp4', cv.VideoWriter_fourcc(*'mp4v'), fps, (frame_width, frame_height))
 
     distortion_handler = DistortionHandler(calibration_json_path='camera_calib.json', 
@@ -156,92 +163,28 @@ def processVideo(video_path):
     panel_handler = PanelHandler(panel_configuration_path=samples_configuration, colors_dict=colors_dict,
                                  colors_list=colors_list, distortion_handler=distortion_handler)
     
-    eye_data_handler = EyeDataHandler(data_path, 'fixations')
-    board_metrics = {}
+    eye_data_handler = EyeDataHandler(data_path, eye_data_topic)
 
+    state_machine_handler = StateMachine(board_handler,panel_handler,eye_data_handler)
+    
     capture_idx = init_capture_idx
     stream.set(cv.CAP_PROP_POS_FRAMES, capture_idx)
 
     while True:
         ret, original_image = stream.read()
+        original_image = ARUCOColorCorrection(original_image)
         if not ret:
             print("Can't receive frame (stream end?). Exiting ...")
             break
         
-        norm_coord = eye_data_handler.step(capture_idx)
-        desnormalized_coord = None
-        if norm_coord is not None:
-            print(f'{capture_idx =}')
-            desnormalized_x = int(norm_coord[0] * original_image.shape[1])
-            desnormalized_y = int(norm_coord[1] * original_image.shape[0])
-            desnormalized_coord = np.array([[desnormalized_x, desnormalized_y]])
 
-        print(f'{norm_coord = }')
-        print(f'{desnormalized_coord = }')
+        state_machine_handler.step(original_image, capture_idx)
 
-        board_handler.step(original_image)
-        panel_handler.step(original_image)
+        mosaic, log_frame = state_machine_handler.visualization(original_image, capture_idx, frame_width, frame_height)
+        mouse_callback_image = mosaic
+        cv.imshow(WINDOW_STREAM_BOARD, mosaic)
+        writer.write(log_frame)
 
-        color, shape, slot, board_coord = board_handler.getPixelInfo(desnormalized_coord)
-        shape, aruco, panel = panel_handler.getPixelInfo(desnormalized_coord)
-
-        # Update board metrics
-        if color is not None:
-            if color not in board_metrics:
-                board_metrics[color] = {shape: {True: 0, False: 0}}
-            if shape not in board_metrics[color]:
-                board_metrics[color][shape] = {True: 0, False: 0}
-
-            board_metrics[color][shape][slot] += 1
-            
-
-        board_view_cfg, board_view_detected = board_handler.getVisualization()
-        image_board_cfg, image_board_detected = board_handler.getUndistortedVisualization(original_image)
-
-        panel_view = panel_handler.getVisualization()
-
-        if norm_coord is not None:
-            cv.circle(image_board_cfg, desnormalized_coord[0], radius=10, color=(0,255,0), thickness=-1)
-            cv.circle(image_board_detected, desnormalized_coord[0], radius=10, color=(0,255,0), thickness=-1)
-            # cv.imshow(WINDOW_STREAM_CAMERA, original_image)
-
-
-        def imshowMosaic(titles_list, images_list, rows, cols, window_name, resize = 1):
-            for index, resized_image in enumerate(images_list):
-                images_list[index] = cv.resize(resized_image, (int(frame_width*resize), int(frame_height*resize)))
-
-            mosaic = buildMosaic(titles_list=titles_list, 
-                        images_list=images_list, 
-                        rows=rows, cols=cols)
-
-            text = f'Frame: {capture_idx}'
-            font = cv.FONT_HERSHEY_SIMPLEX
-            scale = 0.4
-            thickness = 1
-            text_size, _ = cv.getTextSize(text, font, scale, thickness)
-            text_width, text_height = text_size
-            x = mosaic.shape[1] - text_width - 1  # 10 pixel margin
-            y = text_height + 1  # 10 pixel margin
-            cv.putText(mosaic, text, (x, y), font, scale, (0,0,0), thickness)
-
-            cv.imshow(window_name, mosaic)
-        
-        # imshowMosaic(titles_list=['Board Cfg', 'Panel View', 'Board Detected'], 
-        #              images_list=[board_view_cfg, panel_view, board_view_detected], 
-        #              rows=2, cols=2, window_name=WINDOW_STREAM_BOARD, resize = 1/2)
-        
-        # imshowMosaic(titles_list=['Complete Cfg', 'Complete Detected'], 
-        #              images_list=[image_board_cfg, image_board_detected], 
-        #              rows=2, cols=1, window_name=WINDOW_STREAM_CAMERA, resize = 1/2)
-
-        imshowMosaic(titles_list=['Complete Cfg', 'Board Cfg', 'Panel View', 'Complete Detected', 'Board Detected'], 
-                     images_list=[image_board_cfg, board_view_cfg, panel_view, image_board_detected, board_view_detected], 
-                     rows=2, cols=3, window_name=WINDOW_STREAM_BOARD, resize = 2/5)
-        
-
-
-        resized_frame = cv.resize(original_image, (frame_width, frame_height))
-        writer.write(resized_frame)
 
         # check keystroke to exit (image window must be on focus)
         key = cv.pollKey()
@@ -254,23 +197,11 @@ def processVideo(video_path):
 
         capture_idx+=1
 
+    state_machine_handler.print_results(fps)
 
     if stream.isOpened():  stream.release()
     if writer.isOpened():  writer.release()
     cv.destroyAllWindows()
-
-    for color, shapes_dict in board_metrics.items():
-        time_color = 0
-        for shape, slot_dict in shapes_dict.items():
-            for slot, num in slot_dict.items():
-                num = float(num)/float(fps)
-                time_color += num
-
-        print(f'------------------------------')
-        print(f'Color: {color}: {time_color}s')
-        for shape, slot_dict in shapes_dict.items():
-            for slot, num in slot_dict.items():
-                print(f'Shape: {shape} ({slot}): {num}s')
 
 
 

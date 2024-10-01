@@ -32,6 +32,10 @@ class PanelHandler:
         self.homography = None
 
         self.panel_handler_list = self.parseCFGPanelData(panel_configuration_path)
+
+
+    def getCurrentPanel(self):
+        return self.last_detected
     
     def step(self, image):
         undistorted_image = self.distortion_handler.undistortImage(image)
