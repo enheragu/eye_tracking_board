@@ -26,7 +26,7 @@ class DistortionHandler():
                 distCoeffs = np.array(data['distortion_coefficients'])
 
                 print(f'Camera matrix: \n{cameraMatrix}')
-                print(f'distortion_coefficients: \n{distCoeffs}')
+                print(f'distortion_coefficients: \t{distCoeffs}')
             except:
                 print("Calibration file not valid.")
         return cameraMatrix, distCoeffs

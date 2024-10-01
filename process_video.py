@@ -37,6 +37,7 @@ game_configuration='./game_config.yaml'
 game_aruco_board_cfg='./game_aruco_board.yaml'
 samples_configuration='./sample_shape_cfg'
 eye_data_topic = 'fixations'
+frame_speed_multiplier = 3 # process one frame each N to go faster
 
 patternSize = (7,4)
 h_epsilon = 8
@@ -171,6 +172,7 @@ def processVideo(video_path):
     stream.set(cv.CAP_PROP_POS_FRAMES, capture_idx)
 
     while True:
+        stream.set(cv.CAP_PROP_FRAME_COUNT, capture_idx)
         ret, original_image = stream.read()
         original_image = ARUCOColorCorrection(original_image)
         if not ret:
@@ -195,7 +197,7 @@ def processVideo(video_path):
         if key == ord('q') or key == ord('Q') or key == 27:
             break
 
-        capture_idx+=1
+        capture_idx+=frame_speed_multiplier*state_machine_handler.getFrameMultiplier()
 
     state_machine_handler.print_results(fps)
 

@@ -30,6 +30,11 @@ class StateMachine:
 
         self.board_contour_switch_state_threshold = 6
         self.board_contour_nondetected_counter = 0
+
+        self.tm = cv.TickMeter()
+
+        # Speed up those part that do not need so much precision in processing
+        self.frame_speed_multiplier = 1
     
     def visualization(self, original_image, capture_idx, frame_width, frame_height):
         board_view_cfg, board_view_detected = self.board_handler.getVisualization(original_image)    
@@ -55,6 +60,9 @@ class StateMachine:
                      debug_data_list=[None,None,None,None,None,debug_data],
                      rows=2, cols=3, resize = 2/5)
         
+        cv.putText(mosaic, f"FPS: {self.tm.getFPS():.1f} ", org=(3, 10),
+                fontFace=cv.FONT_HERSHEY_DUPLEX, fontScale=0.3, color=(0,0,0), thickness=1, lineType=cv.LINE_AA)
+    
         return mosaic, cv.resize(original_image, (frame_width, frame_height))
         
     def processPanel(self, original_image, capture_idx, desnormalized_coord):
@@ -65,13 +73,14 @@ class StateMachine:
 
         return current_panel
 
-
+    def getFrameMultiplier(self):
+        return min(1, self.frame_speed_multiplier)
 
     """
         State machine control loop
     """
     def step(self, original_image, capture_idx):
-        
+        self.tm.start()
         self.norm_coord = self.eye_data_handler.step(capture_idx)
         self.desnormalized_coord = None
         if self.norm_coord is not None:
@@ -86,10 +95,15 @@ class StateMachine:
 
         if self.current_state == "init":
             self.init_state(original_image, capture_idx, self.desnormalized_coord)
+            self.frame_speed_multiplier = 5
         elif self.current_state == "get_test_name":
             self.get_test_name_state(original_image, capture_idx, self.desnormalized_coord)
+            self.frame_speed_multiplier = 5
         elif self.current_state == "test_execution":
             self.test_execution_state(original_image, capture_idx, self.desnormalized_coord)
+            self.frame_speed_multiplier = 1
+
+        self.tm.stop()
 
     def init_state(self, original_image, capture_idx, desnormalized_coord):
         
