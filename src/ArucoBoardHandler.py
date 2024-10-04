@@ -19,6 +19,15 @@ from src.utils import projectCenter
     Based on aruco markers detected, take white pixels and average the color correction
 """
 def ARUCOColorCorrection(input_img):
+    result = cv.cvtColor(input_img, cv.COLOR_BGR2LAB)
+    avg_a = np.average(result[:, :, 1])
+    avg_b = np.average(result[:, :, 2])
+    result[:, :, 1] = result[:, :, 1] - ((avg_a - 128) * (result[:, :, 0] / 255.0) * 1.1)
+    result[:, :, 2] = result[:, :, 2] - ((avg_b - 128) * (result[:, :, 0] / 255.0) * 1.1)
+    result = cv.cvtColor(result, cv.COLOR_LAB2BGR)
+    return result
+
+
     aruco_dictionary = cv.aruco.getPredefinedDictionary(cv.aruco.DICT_ARUCO_ORIGINAL)
     corners, ids, rejectedImgPoints = cv.aruco.detectMarkers(input_img, aruco_dictionary)
 
@@ -132,22 +141,23 @@ class ArucoBoardHandler:
         _, (warp_width, warp_height) = rescale_3d_points(self.board_poinst_3d, undistorted_frame.shape)
         detected_aruco_list = self.detectArucos(undistorted_frame)
 
-        
-        aruco_corners_image = []
-        aruco_corners_3d = []
-        for detected_aruco in detected_aruco_list:
-            aruco_corners_image.append(sort_points_clockwise(detected_aruco['points_image']))
-            aruco_corners_3d.append(sort_points_clockwise(detected_aruco['points_3d']))
+        # Should detect all arucos?
+        if len(detected_aruco_list) >= len(self.aruco_config):
+            aruco_corners_image = []
+            aruco_corners_3d = []
+            for detected_aruco in detected_aruco_list:
+                aruco_corners_image.append(sort_points_clockwise(detected_aruco['points_image']))
+                aruco_corners_3d.append(sort_points_clockwise(detected_aruco['points_3d']))
 
-        if aruco_corners_image != [] and aruco_corners_3d != []:
-            aruco_corners_image = np.array(aruco_corners_image, dtype=np.float32)
-            aruco_corners_3d = np.array(aruco_corners_3d, dtype=np.float32)
+            if aruco_corners_image != [] and aruco_corners_3d != []:
+                aruco_corners_image = np.array(aruco_corners_image, dtype=np.float32)
+                aruco_corners_3d = np.array(aruco_corners_3d, dtype=np.float32)
 
-            homography, warp_width, warp_height = aruco_board_transform(
-                                    aruco_image_contours=aruco_corners_image,
-                                    aruco_3d_contours=aruco_corners_3d,
-                                    board_3d_contours=self.board_poinst_3d,
-                                    img_shape=undistorted_frame.shape)
+                homography, warp_width, warp_height = aruco_board_transform(
+                                        aruco_image_contours=aruco_corners_image,
+                                        aruco_3d_contours=aruco_corners_3d,
+                                        board_3d_contours=self.board_poinst_3d,
+                                        img_shape=undistorted_frame.shape)
 
         return homography, int(warp_width), int(warp_height)
 
@@ -179,7 +189,9 @@ class ArucoBoardHandler:
             return True
         else:
             return False
-
+    def getColorPixelInfo(self, coordinates_3d):
+        pass
+    
     def getPixelInfo(self, coordinates):
 
         if coordinates is not None:

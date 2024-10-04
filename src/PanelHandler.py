@@ -41,7 +41,8 @@ class PanelHandler:
         undistorted_image = self.distortion_handler.undistortImage(image)
         
         self.panel_view = self.computeApplyHomography(undistorted_image)
-        self.shape_contour = self.detectContour(self.panel_view)
+        # Detects contour of the figure, not doint that for now
+        # self.shape_contour = self.detectContour(self.panel_view)
         # self.panel_view = undistorted_image
 
     def computeApplyHomography(self, undistorted_image):
