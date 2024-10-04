@@ -300,9 +300,45 @@ class BoardHandler:
 
     ## FUNCTIONS BASED ON DETECTION OVER IMAGE
     def detectContour(self, image):
-        hue, sat, intensity = cv.split(cv.cvtColor(image, cv.COLOR_BGR2HSV_FULL))
+        hsv_image = cv.cvtColor(image, cv.COLOR_BGR2HSV_FULL)
+        hue, sat, intensity = cv.split(hsv_image)
+
+        # Image is already compensated, get color infomration from board margins in the image
+        # instead of harcoding them:
+        height, width, _ = image.shape
+        pixel_distance = 15
+        reference_edges = np.concatenate([
+            hsv_image[pixel_distance:height-pixel_distance, pixel_distance],  # Left edge
+            hsv_image[pixel_distance:height-pixel_distance, width-pixel_distance],  # Right edge
+            hsv_image[pixel_distance, pixel_distance:width-pixel_distance],  # Top edge
+            hsv_image[height-pixel_distance, pixel_distance:width-pixel_distance]  # Bottom edge
+        ])
+        
+        ### Logging reference
+        # if reference_edges.size > 0:
+        #     image_reference_edges = image.copy()
+            
+        #     for y in range(pixel_distance, height-pixel_distance):
+        #         cv.circle(image_reference_edges, (pixel_distance, y), 1, (0, 255, 0), -1)  # Point (x=4, y=y)
+        #         cv.circle(image_reference_edges, (width-pixel_distance, y), 1, (0, 255, 0), -1)  # Point (x=width-4, y=y)
+
+        #     for x in range(pixel_distance, width-pixel_distance):
+        #         cv.circle(image_reference_edges, (x, pixel_distance), 1, (0, 255, 0), -1)  # Point (x=x, y=4)
+        #         cv.circle(image_reference_edges, (x, height-pixel_distance), 1, (0, 255, 0), -1)  # Point (x=x, y=height-4)
+
+        #     cv.imshow(f'reference_edges', image_reference_edges)
+
+        mean_h, mean_s, mean_v = np.mean(reference_edges, axis=0)
+        std_h, std_s, std_v = np.std(reference_edges, axis=0)
+        s_margins = [min(0, mean_s-4*std_s), min(255, mean_s+4*std_s)]
+        v_margins = [min(0, mean_v-4*std_v), min(255, mean_v+4*std_v)]
+
+        # print(f"{mean_h = }\t{mean_s = }\t{mean_v = }")
+        # print(f"{std_h = }\t{std_s = }\t{std_v = }")
+        
         # Take any hue with low brightness
-        res = getMaskHue(hue, sat, intensity, h_ref=0, h_epsilon=180, s_margins=[0,255], v_margins = [0,90])
+        # res = getMaskHue(hue, sat, intensity, h_ref=0, h_epsilon=180, s_margins=[0,255], v_margins = [0,90])
+        res = getMaskHue(hue, sat, intensity, h_ref=mean_h, h_epsilon=4*std_h, s_margins=s_margins, v_margins = v_margins)
         # cv.imshow(f'border_mask', res)
 
         edge_image = cv.Canny(res, threshold1=50, threshold2=200)
@@ -311,7 +347,7 @@ class BoardHandler:
         board_contour = None
         # cv.imshow(f'border_edges', edge_image)
         for contour in contours:
-            shape, approx = checkShape(contour, area_filter=[10000, math.inf])
+            shape, approx = checkShape(contour, area_filter=[20000, math.inf])
             if shape == 'rectangle':
                 board_contour = approx
                 break
