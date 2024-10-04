@@ -31,7 +31,8 @@ WINDOW_STREAM_CAMERA = 'Camera View'
 WINDOW_STREAM_BOARD = 'Board View'
 # video_path = './data/world_cut.mp4'
 # data_path = '/home/quique/eeha/eyes_board_color/data/011-20240624T152508Z-001/011/'
-data_path = '/home/quique/eeha/eyes_board_color/data/0001/'
+participant_id = '004'
+data_path = f'/home/quique/eeha/eyes_board_color/data/{participant_id}/'
 video_path = os.path.join(data_path,'world.mp4')
 game_configuration='./game_config.yaml'
 game_aruco_board_cfg='./game_aruco_board.yaml'
@@ -41,7 +42,7 @@ frame_speed_multiplier = 3 # process one frame each N to go faster
 
 patternSize = (7,4)
 h_epsilon = 8
-init_capture_idx = 5600
+init_capture_idx = 4600
 
 
 # cv.namedWindow(WINDOW_STREAM_CAMERA, cv.WINDOW_AUTOSIZE)
@@ -182,7 +183,7 @@ def processVideo(video_path):
 
         state_machine_handler.step(original_image, capture_idx)
 
-        mosaic, log_frame = state_machine_handler.visualization(original_image, capture_idx, frame_width, frame_height)
+        mosaic, log_frame = state_machine_handler.visualization(original_image, capture_idx, frame_width, frame_height, participant_id)
         mouse_callback_image = mosaic
         cv.imshow(WINDOW_STREAM_BOARD, mosaic)
         writer.write(log_frame)
