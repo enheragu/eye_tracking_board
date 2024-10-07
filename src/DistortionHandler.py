@@ -62,23 +62,38 @@ class DistortionHandler():
         An homography can be provided to correct it along with the distortion.
     """
     def correctCoordinates(self, original_coords, homography = None):
+        original_coord_np = np.array(original_coords, dtype=np.float32).reshape(-1, 1, 2)
+        undistorted_points = cv.undistortPoints(original_coord_np, self.cameraMatrix, self.distCoeffs).reshape(-1, 1, 2)
         
-        original_coord_np = np.array(original_coords, dtype=np.float32)
-        dst = cv.undistortPoints(original_coord_np, self.cameraMatrix, self.distCoeffs)
+        undistorted_points = cv.convertPointsToHomogeneous(undistorted_points).reshape(-1, 3)
+        undistorted_points = (self.cameraMatrix @ undistorted_points.T).T
+        undistorted_points = undistorted_points[:, :2]  # Ignore third coord
+        
         if homography is not None:
-            dst = cv.perspectiveTransform(dst.reshape(-1, 1, 2), homography)
+            # Convert to homogeneous
+            undistorted_points_homogeneous = np.hstack([undistorted_points, np.ones((undistorted_points.shape[0], 1))])
+            
+            # Apply homography
+            projected_points = homography @ undistorted_points_homogeneous.T
+            projected_points /= projected_points[2, :]  # Normalize by third coord
+            
+            # Return X,Y coords :)
+            corrected_coords = projected_points[:2, :].T
+        else:
+            corrected_coords = undistorted_points
+        
+        return corrected_coords
 
-        return dst
 
     """
-        Translates from new_image coordinates to undistorted image.
+        Translates from new_image coordinates (corrected and undistorted) to distorted image.
         An homography can be provided to correct it along with the distortion.
     """
-    def reverseCoordinates(self, transformed_coords, homography = None):
+    def reverseCoordinates(self, undistorted_points, homography = None):
         
-        dst = np.array(transformed_coords, dtype=np.float32)
+        dst = np.array(undistorted_points, dtype=np.float32)
         if homography is not None:
-            dst = cv.perspectiveTransform(transformed_coords.reshape(-1, 1, 2), np.linalg.inv(homography))
+            dst = cv.perspectiveTransform(undistorted_points.reshape(-1, 1, 2), np.linalg.inv(homography))
 
         ptsOut = np.array(dst, dtype='float32')
         ptsTemp = np.array([], dtype='float32')

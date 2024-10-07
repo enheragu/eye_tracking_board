@@ -39,13 +39,13 @@ class StateMachine:
     
     def visualization(self, original_image, capture_idx, frame_width, frame_height, participan_id = ""):
         board_view_cfg, board_view_detected = self.board_handler.getVisualization(original_image)    
-        image_board_cfg, image_board_detected = self.board_handler.getUndistortedVisualization(original_image)
+        image_board_cfg, image_board_detected = self.board_handler.getDistortedOriginalVisualization(original_image)
 
         panel_view = self.panel_handler.getVisualization()
         
         if self.norm_coord is not None:
-            cv.circle(image_board_cfg, self.desnormalized_coord[0], radius=10, color=(0,255,0), thickness=-1)
-            cv.circle(image_board_detected, self.desnormalized_coord[0], radius=10, color=(0,255,0), thickness=-1)
+            cv.circle(image_board_cfg, self.desnormalized_coord[0], radius=5, color=(0,255,0), thickness=-1)
+            cv.circle(image_board_detected, self.desnormalized_coord[0], radius=5, color=(0,255,0), thickness=-1)
         
         ## Just logging stuff :)
         debug_data_view = np.zeros_like(panel_view)
@@ -55,24 +55,31 @@ class StateMachine:
 
             if 'init_capture' in self.board_metrics_now:
                 debug_data.append(f"    - Started at {self.board_metrics_now['init_capture']} frame.")
-        elif len(self.board_metrics_store) > 1:
-            board_metrucs_prev = self.board_metrics_store[-1]
-            debug_data.append(f"Previous Test: search -> {board_metrucs_prev['color']} {board_metrucs_prev['shape']}")
+        elif len(self.board_metrics_store) > 0:
+            board_metrics_prev = list(self.board_metrics_store[-1].values())[0]
+            board_metrics_prev_test = list(self.board_metrics_store[-1].keys())[0]
+            debug_data.append(f"Previous Test: search -> {board_metrics_prev_test}")
 
-            if 'init_capture' in board_metrucs_prev:
-                debug_data.append(f"    - Started at {board_metrucs_prev['init_capture']} frame.")
-            if 'end_capture' in board_metrucs_prev:
-                debug_data.append(f"    - Ended at {board_metrucs_prev['end_capture']} frame.")
+            if 'init_capture' in board_metrics_prev:
+                debug_data.append(f"    - Started at {board_metrics_prev['init_capture']} frame.")
+            if 'end_capture' in board_metrics_prev:
+                debug_data.append(f"    - Ended at {board_metrics_prev['end_capture']} frame.")
+                debug_data.append(f"    - Took {board_metrics_prev['end_capture']-board_metrics_prev['init_capture']} frame.")
         
         mosaic = getMosaic(capture_idx, frame_width, frame_height, titles_list=['Complete Cfg', 'Board Cfg', 'Panel View', 'Complete Detected', 'Board Detected', 'Debug'], 
                      images_list=[image_board_cfg, board_view_cfg, panel_view, image_board_detected, board_view_detected, debug_data_view], 
                      debug_data_list=[None,None,None,None,None,debug_data],
                      rows=2, cols=3, resize = 2/5)
         
+        # mosaic_store = getMosaic(capture_idx, frame_width, frame_height, titles_list=['Board Detected', 'Debug'], 
+        #              images_list=[board_view_detected, debug_data_view], 
+        #              debug_data_list=[None,debug_data],
+        #              rows=2, cols=1, resize = 2/5)
+        
         cv.putText(mosaic, f"FPS: {self.tm.getFPS():.1f} ", org=(3, 10),
                 fontFace=cv.FONT_HERSHEY_DUPLEX, fontScale=0.3, color=(0,0,0), thickness=1, lineType=cv.LINE_AA)
     
-        return mosaic, cv.resize(original_image, (frame_width, frame_height))
+        return mosaic, cv.resize(mosaic, (frame_width*3, frame_height*2))
         
     def processPanel(self, original_image, capture_idx, desnormalized_coord):
         self.panel_handler.step(original_image)
@@ -184,12 +191,12 @@ class StateMachine:
     def test_finish_execution_state(self, original_image, capture_idx, desnormalized_coord):
         
         self.board_metrics_now['end_capture'] = capture_idx
-        self.board_metrics_store.append({f'{self.current_test_key}': copy.deepcopy(self.board_metrics_now)})
+        self.board_metrics_store.append({f"{self.current_test_key['color']}_{self.current_test_key['shape']}": copy.deepcopy(self.board_metrics_now)})
         self.board_metrics_now = {}
         self.current_test_key = None
 
         self.current_state = "init"
-        print(f"[StateMachine::test_finish_execution] Switch to init. Gathering data for test {self.current_test_key}")
+        print(f"[StateMachine::test_finish_execution] Switch to init.")
 
 
       

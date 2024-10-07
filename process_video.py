@@ -42,7 +42,7 @@ frame_speed_multiplier = 3 # process one frame each N to go faster
 
 patternSize = (7,4)
 h_epsilon = 8
-init_capture_idx = 4600
+init_capture_idx = 4300
 
 
 # cv.namedWindow(WINDOW_STREAM_CAMERA, cv.WINDOW_AUTOSIZE)
@@ -153,7 +153,7 @@ def processVideo(video_path):
     frame_width = int(stream.get(cv.CAP_PROP_FRAME_WIDTH))
     frame_height = int(stream.get(cv.CAP_PROP_FRAME_HEIGHT))
     print(f"Processing video of {fps} FPS and {frame_width = }; {frame_height = }")
-    writer = cv.VideoWriter('./result.mp4', cv.VideoWriter_fourcc(*'mp4v'), fps, (frame_width, frame_height))
+    writer = cv.VideoWriter('./result.mp4', cv.VideoWriter_fourcc(*'mp4v'), int(fps/frame_speed_multiplier), (frame_width*3, frame_height*2))
 
     distortion_handler = DistortionHandler(calibration_json_path='camera_calib.json', 
                                            frame_width=frame_width, frame_height=frame_height)
