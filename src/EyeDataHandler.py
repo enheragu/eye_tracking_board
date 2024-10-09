@@ -2,6 +2,7 @@
 import os
 
 import time
+import bisect
 
 import threading
 import numpy as np
@@ -11,79 +12,112 @@ import pickle
 from src.deps.file_methods import load_pldata_file
 
 
+def check_duplicated_timestamps(data):
+    timestamps_checked = set()
+    timestamps_duplicated = set()
+
+    for dic in data:
+        timestamp = dic['timestamp']
+        if timestamp in timestamps_checked:
+            timestamps_duplicated.add(timestamp)
+        else:
+            timestamps_checked.add(timestamp)
+
+    return timestamps_duplicated
+
+
+"""
+    When projecting fixation data take into account that theres a big discrepancy
+    in how the matching occurs, theres a lot more thata in fixations that in frames, 
+    so some frames can end up with more than one fixation associated:
+        FPS of eye1.mp4 is 123.88
+        FPS of world.mp4 is 29.81
+"""
 class EyeDataHandler:
     def __init__(self, path, topic_data='fixations'):
         start_time = time.time()
-        cache_file_path = os.path.join(path, 'fixations_processed.pkl')
         
-        if not os.path.exists(cache_file_path):
+        pldata = load_pldata_file(directory=path, topic=topic_data, track_progress_in_console=True)
+        # print(f'{type(data.data)} - {data.data}')
+
+        self.world_timestamps = np.load(os.path.join(path,'world_timestamps.npy'))
+        print(f'{self.world_timestamps = }')
+        # print(f'{len(self.world_timestamps) = }')
+
+        print(f"[EyeDataHandler::__init__] Process all fiaxation data to match world timestamps")
         
-            pldata = load_pldata_file(directory=path, topic=topic_data, track_progress_in_console=True)
-            # print(f'{type(data.data)} - {data.data}')
 
-            self.world_timestamps = np.load(os.path.join(path,'world_timestamps.npy'))
-            # print(f'{self.world_timestamps = }')
-            # print(f'{len(self.world_timestamps) = }')
+        self.fixation_start_world_frame = {}
+        self.data = []
 
-            print(f"[EyeDataHandler] Process all fiaxation data to match world timestamps")
+        last_world_index = 0
+        for index, item in enumerate(pldata.data):
+            dict_obj = dict(item)
+            current_timestamp = dict_obj['timestamp']
+            duration = 0 if not 'duration' in dict_obj else dict_obj['duration']
+            self.data.append({'norm_pos': dict_obj['norm_pos'],
+                            'timestamp': current_timestamp,
+                            'duration': duration})
+                        
+        
+        self.data.sort(key=lambda x: x['timestamp'])
+        self.world_timestamps = sorted(self.world_timestamps)
+        
+        print(f"[EyeDataHandler::__init__] Duplicated timestamps in {topic_data} file: {len(check_duplicated_timestamps(self.data))}")
+
+        duplicated = 0
+
+        for index, item in enumerate(self.data):
+            timestamp = item['timestamp']
             
+            # Find index in which this new timestamp would 'fit'
+            video_frame = bisect.bisect_right(self.world_timestamps, timestamp)
 
-            self.fixation_start_world_frame = {}
-            self.data = []
-
-            last_world_index = 0
-            for index, item in enumerate(pldata.data):
-                dict_obj = dict(item)
-                current_timestamp = dict_obj['timestamp']
-                duration = 0 if not 'duration' in dict_obj else dict_obj['duration']
-                self.data.append({'norm_pos': dict_obj['norm_pos'],
-                                'timestamp': current_timestamp,
-                                'duration': duration})
+            def check_video_frame(video_frame, world_timestamps, fixation_start_world_frame, recursion = 0, max_recursion = 2):
+                if video_frame >= len(world_timestamps):
+                    # Should not be bigger than world_timestamps
+                    video_frame = len(world_timestamps) - 1
+                else:
+                    video_frame = video_frame - 1
                 
-                for world_index, item in enumerate(self.world_timestamps[last_world_index:]):
-                    if item > current_timestamp:
-                        frame = max(0,world_index-1)
-                        self.fixation_start_world_frame[frame] = index
-                        last_world_index = world_index
-                        break
+                video_frame = max(0, video_frame)
                 
-                # # print(f'[{worldf_index}] - {item}')
+                # okey, its repeated, just assign it to next frame...
+                if recursion < max_recursion and video_frame in fixation_start_world_frame:
+                    video_frame += 1
+                    check_video_frame(video_frame, world_timestamps, fixation_start_world_frame, recursion+1)
+                    
+                return video_frame
+            
+            video_frame = check_video_frame(video_frame=video_frame, world_timestamps=self.world_timestamps, 
+                                            fixation_start_world_frame=self.fixation_start_world_frame,
+                                            max_recursion=1)
+            if video_frame in self.fixation_start_world_frame:
+                # print(f"[WARNING][EyeDataHandler::__init__] Frame {video_frame} already existed in fixation_start_world_frame")
+                # prev_index = self.fixation_start_world_frame[video_frame]
+                
+                # print(f"\t· {self.data[prev_index] = }")
+                # print(f"\t· {self.data[index] = }")
+                # print(f"\t· World timestamp detected: {item}")
+                # print(f"\t· {self.world_timestamps[video_frame] = }")
+                duplicated += 1
+                
+            self.fixation_start_world_frame[video_frame] = index
 
-                # timestamp = dict_obj['timestamp']
-                # index = np.where(world_timestamps == timestamp)
-                # print(f'frame[{index}] - {timestamp}')
+        print(f"[EyeDataHandler::__init__] Duplicated timestamps when matching {topic_data} to world video frames: {duplicated}")
 
-                # print("Topic:", dict_obj['topic'])
-                # print("Normalized Position:", dict_obj['norm_pos'])
-                # print("Dispersion:", dict_obj['dispersion'])
-                # # print("Method:", dict_obj['method'])
-                # # print("Base Data:", dict_obj['base_data'])
-                # print("Timestamp:", dict_obj['timestamp'])
-                # print("Duration:", dict_obj['duration'])
-                # # print("Confidence:", dict_obj['confidence'])
-                # # print("Gaze Point 3D:", dict_obj['gaze_point_3d'])
-                # print("ID:", dict_obj['id'])
-
-                # print('-----------------------')
-
-            # print(f'{len(data.data) = }')
-            # print(f'{len(data.timestamps) = }')
-            # print(data.topics.__dir__())
-
-            # print(f'{self.fixation_start_world_frame = }')
-
-            with open(cache_file_path, 'wb') as f:
-                pickle.dump({'fixation_start_world_frame': self.fixation_start_world_frame, 'data': self.data}, f)
-
-        else:    
-            print(f'[EyeDataHandler] Reload previous fixations data stored')
-            with open(cache_file_path, 'rb') as f:
-                data = pickle.load(f)
-                self.fixation_start_world_frame = data['fixation_start_world_frame']
-                self.data = data['data']
-
+                 
         execution_time = time.time() - start_time
-        print(f"[EyeDataHandler] Finished process, took {execution_time:.2f} seconds")
+        print(f'[EyeDataHandler::__init__] Number of fixations: {len(self.data)}')
+        
+        max_index = max(list(self.fixation_start_world_frame.keys()))
+        min_index = min(list(self.fixation_start_world_frame.keys()))
+        print(f'{len(self.fixation_start_world_frame) = }; {self.fixation_start_world_frame[min_index] = }; {self.fixation_start_world_frame[max_index] = }')
+        
+        print(f'{len(self.world_timestamps) = }; {self.world_timestamps[0] = }; {self.world_timestamps[-1] = }')
+        
+
+        print(f"[EyeDataHandler::__init__] Finished process, took {execution_time:.2f} seconds")
 
     def step(self, frame_index):
         if frame_index in self.fixation_start_world_frame:
