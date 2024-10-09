@@ -1,12 +1,16 @@
 #!/usr/bin/env python3
 # encoding: utf-8
-
+import os
 import copy
 
 import cv2 as cv
 import numpy as np
 
-from src.utils import getMosaic
+import csv
+import pickle
+from tabulate import tabulate
+
+from src.utils import getMosaic, bcolors
 
 """
     State Machine that handles program execution
@@ -64,7 +68,7 @@ class StateMachine:
                 debug_data.append(f"    - Started at {board_metrics_prev['init_capture']} frame.")
             if 'end_capture' in board_metrics_prev:
                 debug_data.append(f"    - Ended at {board_metrics_prev['end_capture']} frame.")
-                debug_data.append(f"    - Took {board_metrics_prev['end_capture']-board_metrics_prev['init_capture']} frame.")
+                debug_data.append(f"    - Took {board_metrics_prev['end_capture']-board_metrics_prev['init_capture']} frames.")
         
         mosaic = getMosaic(capture_idx, frame_width, frame_height, titles_list=['Complete Cfg', 'Board Cfg', 'Panel View', 'Complete Detected', 'Board Detected', 'Debug'], 
                      images_list=[image_board_cfg, board_view_cfg, panel_view, image_board_detected, board_view_detected, debug_data_view], 
@@ -90,7 +94,7 @@ class StateMachine:
         return current_panel
 
     def getFrameMultiplier(self):
-        return min(1, self.frame_speed_multiplier)
+        return max(1, self.frame_speed_multiplier)
 
     """
         State machine control loop
@@ -111,20 +115,26 @@ class StateMachine:
 
 
         if self.current_state == "init":
-            self.init_state(original_image, capture_idx, self.desnormalized_coord)
-            self.frame_speed_multiplier = 50
-        elif self.current_state == "get_test_name":
-            self.get_test_name_state(original_image, capture_idx, self.desnormalized_coord)
             self.frame_speed_multiplier = 15
+            self.init_state(original_image, capture_idx, self.desnormalized_coord)
+        elif self.current_state == "get_test_name":
+            self.frame_speed_multiplier = 5    
+            self.get_test_name_state(original_image, capture_idx, self.desnormalized_coord)
         elif self.current_state == "test_start_execution":
+            self.frame_speed_multiplier = 1
             self.test_start_execution_state(original_image, capture_idx, self.desnormalized_coord)
-            self.frame_speed_multiplier = 1
         elif self.current_state == "test_execution":
+            self.frame_speed_multiplier = 1
             self.test_execution_state(original_image, capture_idx, self.desnormalized_coord)
-            self.frame_speed_multiplier = 1
         elif self.current_state == "test_finish_execution":
-            self.test_finish_execution_state(original_image, capture_idx, self.desnormalized_coord)
             self.frame_speed_multiplier = 1
+            self.test_finish_execution_state(original_image, capture_idx, self.desnormalized_coord)
+
+        key = cv.waitKey()
+        if key == ord('q') or key == ord('Q') or key == 27:
+            exit()
+        # key = cv.pollKey()
+        # if key == ord('f') or key == ord('f'):
 
         self.tm.stop()
 
@@ -199,11 +209,52 @@ class StateMachine:
         print(f"[StateMachine::test_finish_execution] Switch to init.")
 
 
-      
+    def log_results(self, video_fps, output_path):
+        with open(os.path.join(output_path,'data.pkl'), 'wb') as f:
+            pickle.dump(self.board_metrics_store, f)
+
+        csv_data = []
+        csv_data.append(['test_name', 'Color', 'Shape', 'Slot Fixations', 'Token Fixations'])
+        for test_metric in self.board_metrics_store:
+            board_metrics = list(test_metric.values())[0]
+            board_test_name = list(test_metric.keys())[0]
+            for color, color_item in board_metrics.items():
+                if color in ['init_capture', 'end_capture']:
+                    continue
+                for shape, shape_item in color_item.items():
+                    csv_data.append([board_test_name, color, shape, shape_item[True], shape_item[False]])
+
+        with open(os.path.join(output_path,'data.csv'), mode="w", newline="") as file:
+            csv.writer(file).writerows(csv_data)
 
     def print_results(self, video_fps):
-        print(self.board_metrics_store)
+        # print(self.board_metrics_store)
 
+        for test_metric in self.board_metrics_store:
+            board_metrics = list(test_metric.values())[0]
+            test_tag = f" Search for {list(test_metric.keys())[0]} "
+
+            log_table_headers = ['Color', 'Shape', 'Slot Fixations', 'Token Fixations']
+            log_table_data = []
+            for color, color_item in board_metrics.items():
+                if color in ['init_capture', 'end_capture']:
+                    continue
+                for shape, shape_item in color_item.items():
+                    log_table_data.append([color, shape, shape_item[True], shape_item[False]])
+
+            formatted_table = tabulate(log_table_data, headers=log_table_headers, tablefmt="pretty")
+            
+            table_width = len(formatted_table.splitlines()[1]) # Get length from dashes, which is second one
+            title_dashes = '-' * ((table_width - len(test_tag)) // 2)
+
+            print(f"{bcolors.OKCYAN}{title_dashes}{test_tag}{title_dashes}{bcolors.ENDC}\n")
+            print(f"    - Started at {board_metrics['init_capture']} frame.")
+            print(f"    - Ended at {board_metrics['end_capture']} frame.")
+            print(f"    - Took {board_metrics['end_capture']-board_metrics['init_capture']} frames.")
+            for line in formatted_table.splitlines():
+                print(line)
+            print("\n\n")
+        
         return 
         for color, shapes_dict in self.board_metrics_store.items():
             time_color = 0

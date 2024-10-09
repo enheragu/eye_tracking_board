@@ -29,20 +29,17 @@ colors_list = {'red': (0,0,255), 'green': (0,255,0), 'blue': (255,0,0), 'yellow'
 
 WINDOW_STREAM_CAMERA = 'Camera View'
 WINDOW_STREAM_BOARD = 'Board View'
-# video_path = './data/world_cut.mp4'
-# data_path = '/home/quique/eeha/eyes_board_color/data/011-20240624T152508Z-001/011/'
 participant_id = '004'
 data_path = f'/home/quique/eeha/eyes_board_color/data/{participant_id}/'
+output_path = f'/home/quique/eeha/eyes_board_color/output/{participant_id}/'
 video_path = os.path.join(data_path,'world.mp4')
 game_configuration='./game_config.yaml'
 game_aruco_board_cfg='./game_aruco_board.yaml'
 samples_configuration='./sample_shape_cfg'
 eye_data_topic = 'fixations'
-frame_speed_multiplier = 3 # process one frame each N to go faster
+frame_speed_multiplier = 1 # process one frame each N to go faster
 
-patternSize = (7,4)
-h_epsilon = 8
-init_capture_idx = 4300
+init_capture_idx = 18700 #4300
 
 
 # cv.namedWindow(WINDOW_STREAM_CAMERA, cv.WINDOW_AUTOSIZE)
@@ -173,7 +170,7 @@ def processVideo(video_path):
     stream.set(cv.CAP_PROP_POS_FRAMES, capture_idx)
 
     while True:
-        stream.set(cv.CAP_PROP_FRAME_COUNT, capture_idx)
+        stream.set(cv.CAP_PROP_POS_FRAMES, capture_idx)
         ret, original_image = stream.read()
         original_image = ARUCOColorCorrection(original_image)
         if not ret:
@@ -200,12 +197,16 @@ def processVideo(video_path):
 
         capture_idx+=frame_speed_multiplier*state_machine_handler.getFrameMultiplier()
 
-    state_machine_handler.print_results(fps)
-
     if stream.isOpened():  stream.release()
     if writer.isOpened():  writer.release()
     cv.destroyAllWindows()
 
+
+    state_machine_handler.print_results(fps)
+    os.makedirs(output_path, exist_ok=True)
+    state_machine_handler.log_results(fps, output_path=output_path)
+    
+    
 
 
 if __name__ == "__main__":
