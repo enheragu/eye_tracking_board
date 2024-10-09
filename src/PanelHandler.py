@@ -49,7 +49,7 @@ class PanelHandler:
         
         self.last_detected = None
         for aruco_handler in self.panel_handler_list:
-            homography, self.warp_width, self.warp_height = aruco_handler.getTransform(undistorted_image)
+            homography, self.warp_width, self.warp_height, rotated = aruco_handler.getTransform(undistorted_image)
             if homography is not None:
                 self.homography = homography
                 self.last_detected = {'color': aruco_handler.color, 'shape': aruco_handler.shape}

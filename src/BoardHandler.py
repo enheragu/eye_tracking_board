@@ -50,7 +50,8 @@ class BoardHandler:
                                                      colors_list=self.colors_list, 
                                                      cameraMatrix=self.distortion_handler.cameraMatrix, 
                                                      distCoeffs=self.distortion_handler.distCoeffs)
-        self.board_size, self.board_size_mm, self.board_data_dict = self.parseCFGBoardData(game_cfg_path)
+        self.board_size, self.board_size_mm, self.board_data_dict_upright, self.board_data_dict_rotated = self.parseCFGBoardData(game_cfg_path)
+        self.board_data_dict = self.board_data_dict_upright
 
         self.undistorted_image = None
         self.board_view = None
@@ -203,7 +204,9 @@ class BoardHandler:
             #                         board_3d_contours=self.margin_points_3d,
             #                         img_shape=undistorted_image.shape)
 
-        self.homography, self.warp_width, self.warp_height = self.aruco_board_handler.getTransform(undistorted_image)
+        self.homography, self.warp_width, self.warp_height, rotated = self.aruco_board_handler.getTransform(undistorted_image)
+        self.board_data_dict = self.board_data_dict_rotated if rotated else self.board_data_dict_upright 
+
         # display_image = np.zeros((self.warp_width, self.warp_height, 3), dtype=undistorted_image.dtype)
         
         if self.homography is not None:
@@ -241,7 +244,7 @@ class BoardHandler:
         board_data_dict = {}
         with open(game_configuration) as file:
             data = yaml.load(file, Loader=SafeLoader)
-            board_data_dict = {tuple(map(int, key.split(','))): value for key, value in data['board_config'].items()}
+            board_data_dict_upright = {tuple(map(int, key.split(','))): value for key, value in data['board_config'].items()}
             board_size = data['board_size']      
             board_size_mm = data['board_size_mm']
 
@@ -261,8 +264,11 @@ class BoardHandler:
                 [board_size_mm[0]+margin*2, board_size_mm[1]+margin*2, 0]  # Esquina inferior derecha
             ]], dtype=np.float32)
 
-        
-        return board_size, board_size_mm, board_data_dict
+        def rotate_coordinates_180(coords, board_size):
+            return (board_size[0] - coords[0] - 1, board_size[1] - coords[1] - 1)
+        board_data_dict_rotated = {rotate_coordinates_180(key, board_size): value for key, value in board_data_dict_upright.items()}
+
+        return board_size, board_size_mm, board_data_dict_upright, board_data_dict_rotated
     
     def computeBoardMatrix(self, board_contour, board_size):
         x, y, w, h = cv.boundingRect(board_contour)
@@ -372,9 +378,10 @@ class BoardHandler:
         board_contour = None
         # cv.imshow(f'border_edges', edge_image)
         for contour in contours:
-            shape, approx = checkShape(contour, area_filter=[40000, math.inf])
+            shape, approx = checkShape(contour, area_filter=[700000, math.inf])
             if shape == 'rectangle':
                 board_contour = approx
+                area = cv.contourArea(contour)
                 break
  
         # cv.imshow(f'border_edges', edge_image)

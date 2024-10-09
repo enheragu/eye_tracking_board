@@ -162,7 +162,7 @@ class ArucoBoardHandler:
                     rotated_arucos += 1
         
         if rotated_arucos >= len(self.aruco_config)*0.5:
-            print(f"Need rotation! {rotated_arucos} out of {len(detected_aruco_list)}")
+            # print(f"Need rotation! {rotated_arucos} out of {len(detected_aruco_list)}")
             need_rotation = True
         else:
             need_rotation = False
@@ -202,7 +202,7 @@ class ArucoBoardHandler:
                                         board_3d_contours=board_poinst_3d,
                                         img_shape=undistorted_frame.shape)
 
-        return homography, int(warp_width), int(warp_height)
+        return homography, int(warp_width), int(warp_height), rotated
 
 
     def handleVisualization(self, image):
