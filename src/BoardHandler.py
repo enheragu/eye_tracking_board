@@ -46,7 +46,10 @@ class BoardHandler:
         self.colors_dict = colors_dict
         self.colors_list = colors_list
         self.color = self.colors_list['board']
-        self.aruco_board_handler = ArucoBoardHandler(aruco_board_cfg_path, self.colors_list, 'board')
+        self.aruco_board_handler = ArucoBoardHandler(arucoboard_cfg_path=aruco_board_cfg_path, color='board', 
+                                                     colors_list=self.colors_list, 
+                                                     cameraMatrix=self.distortion_handler.cameraMatrix, 
+                                                     distCoeffs=self.distortion_handler.distCoeffs)
         self.board_size, self.board_size_mm, self.board_data_dict = self.parseCFGBoardData(game_cfg_path)
 
         self.undistorted_image = None
@@ -68,12 +71,30 @@ class BoardHandler:
         self.cell_contours = None
 
         self.cell_matrix, self.cell_width, self.cell_height = None, None, None
+
+        ## Add inertia to board contour, if not found in N frames just propagates
+        # previous
+        self.prev_board_contour = None
+        self.board_contour_inertia_step = 2
+        self.board_contour_intertia_counter = 0
         
         
     def step(self, image):
         undistorted_image = self.distortion_handler.undistortImage(image)
         self.board_view = self.computeApplyHomography(undistorted_image)
         self.board_contour = self.detectContour(self.board_view)
+
+        if self.board_contour is None:
+            if self.board_contour_inertia_step > self.board_contour_intertia_counter:
+                self.board_contour = self.prev_board_contour
+                self.board_contour_intertia_counter+=1
+            else:
+                self.prev_board_contour = None
+                self.board_contour_intertia_counter = 0
+        else:
+            self.board_contour_intertia_counter = 0
+            self.prev_board_contour = self.board_contour
+
         
         self.cell_matrix, self.cell_width, self.cell_height = None, None, None
         if self.board_contour is not None and len(self.board_contour) != 0:
@@ -351,11 +372,11 @@ class BoardHandler:
         board_contour = None
         # cv.imshow(f'border_edges', edge_image)
         for contour in contours:
-            shape, approx = checkShape(contour, area_filter=[20000, math.inf])
+            shape, approx = checkShape(contour, area_filter=[40000, math.inf])
             if shape == 'rectangle':
                 board_contour = approx
                 break
-                
+ 
         # cv.imshow(f'border_edges', edge_image)
         # cv.imshow(f'border_contour', display_image)
         return board_contour

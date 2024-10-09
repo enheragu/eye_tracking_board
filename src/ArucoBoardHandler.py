@@ -64,15 +64,31 @@ def ARUCOColorCorrection(input_img):
     return corrected_image
 
 
+def rotate_points_180_around_center(points, board_center):
+    rotation_matrix = np.array([
+        [-1, 0],
+        [0, -1]
+    ])
+
+    translated_points = points - board_center
+    rotated_points = np.dot(translated_points, rotation_matrix.T) + board_center
+
+    return rotated_points
+
+
+
 class ArucoBoardHandler:
-    def __init__(self, arucoboard_cfg_path, colors_list, color, shape = ''):
+    def __init__(self, arucoboard_cfg_path, colors_list, color, cameraMatrix = None, distCoeffs = None, shape = ''):
 
         self.colors_list = colors_list
         self.color = color
         self.shape = shape
 
+        self.cameraMatrix = cameraMatrix
+        self.distCoeffs = distCoeffs
+
         self.aruco_dictionary = cv.aruco.getPredefinedDictionary(cv.aruco.DICT_ARUCO_ORIGINAL)
-        self.aruco_config, self.board_poinst_3d = self.parseCFGPanelData(arucoboard_cfg_path)
+        self.aruco_config, self.board_poinst_3d, self.board_poinst_3d_rotated, self.aruco_side = self.parseCFGPanelData(arucoboard_cfg_path)
         
 
     def parseCFGPanelData(self, arucoboard_cfg_path):
@@ -84,6 +100,7 @@ class ArucoBoardHandler:
             board_position = data['board_position']
             aruco_side = data['aruco_side']
 
+            board_center = np.array([board_position[0] + board_size[0] / 2, board_position[1] + board_size[1] / 2])        
 
             aruco_3d_data = []
             for marker_cfg in data['marker_configuration']:
@@ -95,7 +112,9 @@ class ArucoBoardHandler:
                     [marker_cfg['position'][0]+aruco_side, marker_cfg['position'][1]], #, marker_cfg['position'][2]],           # Esquina superior derecha
                     [marker_cfg['position'][0]+aruco_side, marker_cfg['position'][1]+aruco_side] #, marker_cfg['position'][2]] # Esquina inferior derecha
                 ], dtype=np.float32)
-            
+
+                aruco_3d_data[-1]['points_3d_rotated'] = rotate_points_180_around_center(aruco_3d_data[-1]['points_3d'], board_center)
+
 
             board_points_3d = np.array([
                 [board_position[0], board_position[1]], #, board_position[2]],                      # Esquina superior izquierda
@@ -104,8 +123,11 @@ class ArucoBoardHandler:
                 [board_position[0]+board_size[0], board_position[1]+board_size[1]] #, board_position[2]] # Esquina inferior derecha
             ], dtype=np.float32)
 
+
+            board_points_3d_rotated = rotate_points_180_around_center(board_points_3d, board_center)
+
         
-        return aruco_3d_data, board_points_3d
+        return aruco_3d_data, board_points_3d, board_points_3d_rotated, aruco_side
 
     def detectArucos(self, undistorted_frame):
         
@@ -117,7 +139,7 @@ class ArucoBoardHandler:
         for corner in corners:
             cv.cornerSubPix(gray_image, corner, winSize=(5, 5), zeroZone=(-1, -1), criteria=criteria)
 
-
+        rotated_arucos = 0
         detected_aruco_list = []
         if ids is not None and ids.size > 0:
             for index, id in enumerate(ids):
@@ -129,25 +151,46 @@ class ArucoBoardHandler:
                         detected_aruco_list.append(current_data)
                         found = True  # ID encontrado
                         break
-                # if not found:
-                #     print(f"ID {id} not in configuration: {self.aruco_config}")
-        # else:
-        #     print("No ids found in image")
-
-        return detected_aruco_list
+            
+            rvecs, tvecs, _ = cv.aruco.estimatePoseSingleMarkers(corners, self.aruco_side, self.cameraMatrix, self.distCoeffs)
+            ## Check rotation matrix, if is around 180 the board needs rotation :)
+            
+            for i, rvec in enumerate(rvecs):
+                R, _ = cv.Rodrigues(rvec)  # Rotation matrix
+                yaw = np.arctan2(R[1, 0], R[0, 0])
+                if abs(yaw) > np.pi / 2:
+                    rotated_arucos += 1
+        
+        if rotated_arucos >= len(self.aruco_config)*0.5:
+            print(f"Need rotation! {rotated_arucos} out of {len(detected_aruco_list)}")
+            need_rotation = True
+        else:
+            need_rotation = False
+            
+        return detected_aruco_list, need_rotation
 
     def getTransform(self, undistorted_frame):
+
+        cv.imshow('getTransform::undistorted_frame', undistorted_frame)
         homography = None
         _, (warp_width, warp_height) = rescale_3d_points(self.board_poinst_3d, undistorted_frame.shape)
-        detected_aruco_list = self.detectArucos(undistorted_frame)
+        detected_aruco_list, rotated = self.detectArucos(undistorted_frame)
 
         # Should detect all arucos?
-        if len(detected_aruco_list) >= len(self.aruco_config):
+        # Problem with board -> detect at least 60% of configured arucos
+        if len(detected_aruco_list) > len(self.aruco_config)*0.5:
+            aruco_corners_image = np.array([detected_aruco['points_image'] for detected_aruco in detected_aruco_list])
+
+            ## Theres one marker rotated all the time...ups
+            # Hack to work with rotated bard...
+            aruco_coord_tag = 'points_3d_rotated' if rotated else 'points_3d'
+            board_poinst_3d = self.board_poinst_3d_rotated if rotated else self.board_poinst_3d 
+            
             aruco_corners_image = []
             aruco_corners_3d = []
             for detected_aruco in detected_aruco_list:
                 aruco_corners_image.append(sort_points_clockwise(detected_aruco['points_image']))
-                aruco_corners_3d.append(sort_points_clockwise(detected_aruco['points_3d']))
+                aruco_corners_3d.append(sort_points_clockwise(detected_aruco[aruco_coord_tag]))
 
             if aruco_corners_image != [] and aruco_corners_3d != []:
                 aruco_corners_image = np.array(aruco_corners_image, dtype=np.float32)
@@ -156,15 +199,18 @@ class ArucoBoardHandler:
                 homography, warp_width, warp_height = aruco_board_transform(
                                         aruco_image_contours=aruco_corners_image,
                                         aruco_3d_contours=aruco_corners_3d,
-                                        board_3d_contours=self.board_poinst_3d,
+                                        board_3d_contours=board_poinst_3d,
                                         img_shape=undistorted_frame.shape)
 
         return homography, int(warp_width), int(warp_height)
 
 
     def handleVisualization(self, image):
+        aruco_list, rotated = self.detectArucos(image)
 
-        aruco_list = self.detectArucos(image)
+        if rotated:
+            rotated_image = cv.rotate(image, cv.ROTATE_180)
+            return self.getTransform(rotated_image)
             
         for aruco_data in aruco_list:
             
@@ -189,6 +235,7 @@ class ArucoBoardHandler:
             return True
         else:
             return False
+        
     def getColorPixelInfo(self, coordinates_3d):
         pass
     

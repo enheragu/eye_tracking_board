@@ -72,7 +72,9 @@ class PanelHandler:
         for yaml_file in yaml_files:
             shape = yaml_file.split('/')[-1].split('_')[0]
             color = yaml_file.split('/')[-1].split('_')[1].split('.')[0]
-            panel_handler_list.append(ArucoBoardHandler(arucoboard_cfg_path=yaml_file, colors_list=self.colors_list, color=color, shape=shape))
+            panel_handler_list.append(ArucoBoardHandler(arucoboard_cfg_path=yaml_file, colors_list=self.colors_list, 
+                                                        color=color, cameraMatrix=self.distortion_handler.cameraMatrix, 
+                                                        distCoeffs=self.distortion_handler.distCoeffs, shape=shape))
         return panel_handler_list
             
 
