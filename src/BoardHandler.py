@@ -224,9 +224,10 @@ class BoardHandler:
             and self.board_data_dict is not None:
             
             self.fixation_coord = self.distortion_handler.correctCoordinates(coordinates, self.homography)
-            # print(f'Original coordinates: {coordinates = }')
-            # print(f'Fixation projected: {self.fixation_coord = }')
+            # print(f'[BoardHandler::getPixelInfo] Original coordinates: {coordinates = }')
+            # print(f'[BoardHandler::getPixelInfo] Fixation projected: {self.fixation_coord = }')
             idx = self.getCellIndex(self.fixation_coord)
+            # print(f'[BoardHandler::getPixelInfo] Cell index: {idx = }')
             
             if idx[0] is not None:
                 color = self.board_data_dict[idx][0]
@@ -234,9 +235,11 @@ class BoardHandler:
                 slot = self.board_data_dict[idx][2]
                 board_coord = idx
 
-                # print(f"Fixation detected in: {self.board_data_dict[idx]} in {board_coord}")
+                print(f"[BoardHandler::getPixelInfo] Fixation detected in: {self.board_data_dict[idx]} in {board_coord}")
                 return color, shape, slot, board_coord
-        
+            else:
+                print(f"[BoardHandler::getPixelInfo] Fixation not detected, coordinates not detected in board: {self.fixation_coord}")
+                
         return None, None, None, None
 
     ## FUNCTIONS BASED ON CONFIGURATION

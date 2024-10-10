@@ -171,7 +171,7 @@ class ArucoBoardHandler:
 
     def getTransform(self, undistorted_frame):
 
-        cv.imshow('getTransform::undistorted_frame', undistorted_frame)
+        # cv.imshow('getTransform::undistorted_frame', undistorted_frame)
         homography = None
         _, (warp_width, warp_height) = rescale_3d_points(self.board_poinst_3d, undistorted_frame.shape)
         detected_aruco_list, rotated = self.detectArucos(undistorted_frame)

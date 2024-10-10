@@ -5,6 +5,7 @@ opencv-contrib-python
 PyYAML
 scikit-learn
 tabulate
+argparse
 ## Pupil-labs .pldata handling
 rich
 msgpack>=1.0.0

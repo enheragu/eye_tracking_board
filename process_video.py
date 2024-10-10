@@ -4,6 +4,7 @@
 import os
 import math
 import random
+import argparse
 
 import cv2 as cv
 import numpy as np
@@ -27,9 +28,14 @@ colors_dict = {'red':    {'h': 350, 'eps': 29},
 
 colors_list = {'red': (0,0,255), 'green': (0,255,0), 'blue': (255,0,0), 'yellow': (0,255,255), 'board': (255,255,0)}
 
-WINDOW_STREAM_CAMERA = 'Camera View'
-WINDOW_STREAM_BOARD = 'Board View'
-participant_id = '004'
+participant_id = '00001'
+
+parser = argparse.ArgumentParser(description='Process PupilLabs data with board')
+parser.add_argument('-p', dest='participant', type=str, default=participant_id, metavar='id', help='Participant folder id')
+participant_id = parser.parse_args().participant
+
+WINDOW_STREAM_CAMERA = f'Camera View {participant_id}'
+WINDOW_STREAM_BOARD = f'Board View {participant_id}'
 data_path = f'/home/quique/eeha/eyes_board_color/data/{participant_id}/'
 output_path = f'/home/quique/eeha/eyes_board_color/output/{participant_id}/'
 video_path = os.path.join(data_path,'world.mp4')
@@ -39,7 +45,9 @@ samples_configuration='./sample_shape_cfg'
 eye_data_topic = 'fixations'
 frame_speed_multiplier = 1 # process one frame each N to go faster
 
-init_capture_idx = 18700 #4300
+init_capture_idx = 0 #4300 #18700
+
+enable_visualization = True
 
 
 # cv.namedWindow(WINDOW_STREAM_CAMERA, cv.WINDOW_AUTOSIZE)
@@ -146,10 +154,16 @@ def processVideo(video_path):
         print(f"Could not open video {video_path}")
         exit()
 
+    total_frames = int(stream.get(cv.CAP_PROP_FRAME_COUNT))
+    print(f'[processVideo::{participant_id}] Processing participant: {participant_id}')
+    print(f'[processVideo::{participant_id}] Processing: {video_path}')
+    print(f'[processVideo::{participant_id}] Video with: {total_frames} frames')
+
     fps = stream.get(cv.CAP_PROP_FPS)
     frame_width = int(stream.get(cv.CAP_PROP_FRAME_WIDTH))
     frame_height = int(stream.get(cv.CAP_PROP_FRAME_HEIGHT))
-    print(f"Processing video of {fps} FPS and {frame_width = }; {frame_height = }")
+    print(f"[processVideo::{participant_id}] Processing video of {fps} FPS and {frame_width = }; {frame_height = }")
+    print(f"[processVideo::{participant_id}] Processing video duration {total_frames/fps} seconds")
     writer = cv.VideoWriter('./result.mp4', cv.VideoWriter_fourcc(*'mp4v'), int(fps/frame_speed_multiplier), (frame_width*3, frame_height*2))
 
     distortion_handler = DistortionHandler(calibration_json_path='camera_calib.json', 
@@ -162,7 +176,7 @@ def processVideo(video_path):
     panel_handler = PanelHandler(panel_configuration_path=samples_configuration, colors_dict=colors_dict,
                                  colors_list=colors_list, distortion_handler=distortion_handler)
     
-    eye_data_handler = EyeDataHandler(data_path, eye_data_topic)
+    eye_data_handler = EyeDataHandler(path=data_path, video_fps=fps, topic_data=eye_data_topic)
 
     state_machine_handler = StateMachine(board_handler,panel_handler,eye_data_handler)
     
@@ -170,21 +184,29 @@ def processVideo(video_path):
     stream.set(cv.CAP_PROP_POS_FRAMES, capture_idx)
 
     while True:
+        if capture_idx >= total_frames:
+            print(f"[processVideo::{participant_id}] End of video detected :)")
+            break
+
         stream.set(cv.CAP_PROP_POS_FRAMES, capture_idx)
         ret, original_image = stream.read()
         original_image = ARUCOColorCorrection(original_image)
         if not ret:
-            print("Can't receive frame (stream end?). Exiting ...")
+            print(f"[processVideo::{participant_id}] Can't receive frame (stream end?). Exiting ...")
             break
         
 
         state_machine_handler.step(original_image, capture_idx)
 
-        mosaic, log_frame = state_machine_handler.visualization(original_image, capture_idx, frame_width, frame_height, participant_id)
-        mouse_callback_image = mosaic
-        cv.imshow(WINDOW_STREAM_BOARD, mosaic)
-        writer.write(log_frame)
-
+        if enable_visualization:
+            mosaic, log_frame = state_machine_handler.visualization(original_image=original_image, capture_idx=capture_idx, 
+                                                                    last_capture_idx=total_frames, frame_width=frame_width, 
+                                                                    frame_height=frame_height, participan_id=participant_id)
+            mouse_callback_image = mosaic
+            cv.imshow(WINDOW_STREAM_BOARD, mosaic)
+            writer.write(log_frame)
+        else:
+            print(f"FPS: {state_machine_handler.tm.getFPS():.1f}")
 
         # check keystroke to exit (image window must be on focus)
         key = cv.pollKey()
@@ -202,7 +224,6 @@ def processVideo(video_path):
     cv.destroyAllWindows()
 
 
-    state_machine_handler.print_results(fps)
     os.makedirs(output_path, exist_ok=True)
     state_machine_handler.log_results(fps, output_path=output_path)
     
@@ -210,8 +231,4 @@ def processVideo(video_path):
 
 
 if __name__ == "__main__":
-    stream = cv.VideoCapture(video_path)
-    frames = stream.get(cv.CAP_PROP_FRAME_COUNT)
-    print(f'{frames}')
-
     processVideo(video_path)

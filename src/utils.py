@@ -143,7 +143,7 @@ def add_title(image, title):
     # Copiar la imagen para no alterar la original
     img_with_title = image.copy()
     # Añadir el texto del título en la parte superior izquierda de la imagen
-    cv.putText(img_with_title, title, (10, 30), cv.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2, cv.LINE_AA)
+    cv.putText(img_with_title, title, (10, 30), cv.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 1, cv.LINE_AA)
     return img_with_title
 
 
@@ -183,7 +183,7 @@ def resize_with_black_padding(image, new_size):
     return padded_img
 
 
-def getMosaic(capture_idx, frame_width, frame_height, titles_list, images_list, rows, cols, resize = 1, debug_data_list = None):
+def getMosaic(capture_idx, last_capture_idx, fps, frame_width, frame_height, titles_list, images_list, rows, cols, resize = 1, debug_data_list = None):
 
     if debug_data_list is None:
         debug_data_list = [None*len(images_list)]
@@ -196,7 +196,7 @@ def getMosaic(capture_idx, frame_width, frame_height, titles_list, images_list, 
                 rows=rows, cols=cols,
                 debug_data_list=debug_data_list)
 
-    text = f'Frame: {capture_idx}'
+    text = f'Frame: {capture_idx}/{last_capture_idx}'
     font = cv.FONT_HERSHEY_SIMPLEX
     scale = 0.4
     thickness = 1
@@ -204,6 +204,10 @@ def getMosaic(capture_idx, frame_width, frame_height, titles_list, images_list, 
     text_width, text_height = text_size
     x = mosaic.shape[1] - text_width - 1  # 10 pixel margin
     y = text_height + 1  # 10 pixel margin
-    cv.putText(mosaic, text, (x, y), font, scale, (0,0,0), thickness)
+    cv.putText(mosaic, text, (x, y), font, scale, color=(0,0,0), thickness=thickness)
+
+    cv.putText(mosaic, f"FPS: {fps:.1f}", org=(3, 10),
+        fontFace=font, fontScale=scale, color=(0,0,0), thickness=thickness)
+    
 
     return mosaic
