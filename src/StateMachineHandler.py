@@ -33,8 +33,8 @@ class StateMachine:
         self.board_metrics_now = {}
         self.current_test_key = None
 
-        self.norm_coord = None
-        self.desnormalized_coord = None
+        self.norm_coord_list = []
+        self.desnormalized_coord_list = []
 
 
         self.board_contour_switch_state_threshold = 4
@@ -48,8 +48,8 @@ class StateMachine:
 
 
         self.state_info = {
-            "init": {'callback': self.init_state, 'frame_mult': 1},
-            "get_test_name": {'callback': self.get_test_name_state, 'frame_mult': 1},
+            "init": {'callback': self.init_state, 'frame_mult': 15},
+            "get_test_name": {'callback': self.get_test_name_state, 'frame_mult': 4},
             "test_start_execution": {'callback': self.test_start_execution_state, 'frame_mult': 1},
             "test_execution": {'callback': self.test_execution_state, 'frame_mult': 1},
             "test_finish_execution": {'callback': self.test_finish_execution_state, 'frame_mult': 1} 
@@ -71,9 +71,10 @@ class StateMachine:
 
         panel_view = self.panel_handler.getVisualization()
         
-        if self.norm_coord is not None:
-            cv.circle(image_board_cfg, self.desnormalized_coord[0], radius=5, color=(0,255,0), thickness=-1)
-            cv.circle(image_board_detected, self.desnormalized_coord[0], radius=5, color=(0,255,0), thickness=-1)
+        if self.norm_coord_list:
+            for desnormalized_coord in self.desnormalized_coord_list:
+                cv.circle(image_board_cfg, desnormalized_coord[0], radius=5, color=(0,255,0), thickness=-1)
+                cv.circle(image_board_detected, desnormalized_coord[0], radius=5, color=(0,255,0), thickness=-1)
         
         ## Just logging stuff :)
         debug_data_view = np.zeros_like(panel_view)
@@ -109,10 +110,10 @@ class StateMachine:
 
         return mosaic, cv.resize(mosaic, (frame_width*3, frame_height*2))
         
-    def processPanel(self, original_image, capture_idx, desnormalized_coord):
+    def processPanel(self, original_image, capture_idx, desnormalized_coord_list):
         self.panel_handler.step(original_image)
 
-        shape, aruco, panel = self.panel_handler.getPixelInfo(desnormalized_coord)
+        shape, aruco, panel = self.panel_handler.getPixelInfo(desnormalized_coord_list)
         current_panel = self.panel_handler.getCurrentPanel()
 
         return current_panel
@@ -129,21 +130,22 @@ class StateMachine:
         self.init_frame_number = min(self.init_frame_number, capture_idx)
         self.last_frame_number = capture_idx
         
-        self.norm_coord = self.eye_data_handler.step(capture_idx)
-        self.desnormalized_coord = None
-        if self.norm_coord is not None:
+        self.norm_coord_list = self.eye_data_handler.step(capture_idx)
+        self.desnormalized_coord_list = []
+        for norm_coord in self.norm_coord_list:
             # print(f'{capture_idx =}')
-            desnormalized_x = int(self.norm_coord[0] * original_image.shape[1])
-            desnormalized_y = int(self.norm_coord[1] * original_image.shape[0])
-            self.desnormalized_coord = np.array([[desnormalized_x, desnormalized_y]])
+            desnormalized_x = int(norm_coord[0] * original_image.shape[1])
+            desnormalized_y = int(norm_coord[1] * original_image.shape[0])
+            self.desnormalized_coord_list.append(np.array([[desnormalized_x, desnormalized_y]]))
             self.fixation_data_store['total'] += 1
+        
         # print(f'{norm_coord = }')
-        # print(f'{desnormalized_coord = }')
+        # print(f'{desnormalized_coord_list = }')
 
-        self.state_info[self.current_state]['callback'](original_image, capture_idx, self.desnormalized_coord)
+        self.state_info[self.current_state]['callback'](original_image, capture_idx, self.desnormalized_coord_list)
         self.frame_speed_multiplier = self.state_info[self.current_state]['frame_mult']
         
-        if self.norm_coord is not None: self.fixation_data_store[self.current_state] += 1
+        if self.norm_coord_list: self.fixation_data_store[self.current_state] += len(self.norm_coord_list)
         self.frame_data_store[self.current_state] += 1
         self.frame_data_store['total'] += 1
         # key = cv.waitKey()
@@ -152,22 +154,22 @@ class StateMachine:
 
         self.tm.stop()
 
-    def init_state(self, original_image, capture_idx, desnormalized_coord):
+    def init_state(self, original_image, capture_idx, desnormalized_coord_list):
         
-        current_panel = self.processPanel(original_image, capture_idx, desnormalized_coord)
+        current_panel = self.processPanel(original_image, capture_idx, desnormalized_coord_list)
         if current_panel is not None:
             self.current_test_key = current_panel
             self.current_state = "get_test_name"
             printStateChange(f"[StateMachine::init_state] [{capture_idx}] Switch to get_test_name state. Test panel detected.")
 
-    def get_test_name_state(self, original_image, capture_idx, desnormalized_coord):
+    def get_test_name_state(self, original_image, capture_idx, desnormalized_coord_list):
         
-        current_panel = self.processPanel(original_image, capture_idx, desnormalized_coord)
+        current_panel = self.processPanel(original_image, capture_idx, desnormalized_coord_list)
         if current_panel is None:
             self.current_state = "test_start_execution"
             printStateChange(f"[StateMachine::get_test_name] [{capture_idx}] Switch to test_start_execution. Gathering data for test {self.current_test_key['shape']} {self.current_test_key['color']}")
 
-    def test_start_execution_state(self, original_image, capture_idx, desnormalized_coord):
+    def test_start_execution_state(self, original_image, capture_idx, desnormalized_coord_list):
         
         self.board_handler.step(original_image)
         
@@ -183,19 +185,20 @@ class StateMachine:
             self.current_state = "test_execution"
             printStateChange(f"[StateMachine::test_start_execution] [{capture_idx}] Switch to test_execution. Gathering data for test {self.current_test_key['shape']} {self.current_test_key['color']}")
             ## Wanna check with this current frame already
-            self.test_execution_state(original_image, capture_idx, desnormalized_coord)
+            self.test_execution_state(original_image, capture_idx, desnormalized_coord_list)
 
 
-    def test_execution_state(self, original_image, capture_idx, desnormalized_coord):
+    def test_execution_state(self, original_image, capture_idx, desnormalized_coord_list):
 
         if not 'init_capture' in self.board_metrics_now:
             self.board_metrics_now['init_capture'] = capture_idx
 
         self.board_handler.step(original_image)
-        color, shape, slot, board_coord = self.board_handler.getPixelInfo(desnormalized_coord)
+        coord_data_list = self.board_handler.getPixelInfo(desnormalized_coord_list)
 
-        # Update board metrics
-        if color is not None:
+        for coord_data in coord_data_list:
+            color, shape, slot, board_coord = coord_data
+            # Update board metrics
             if color not in self.board_metrics_now:
                 self.board_metrics_now[color] = {shape: {True: 0, False: 0}}
             if shape not in self.board_metrics_now[color]:
@@ -215,9 +218,9 @@ class StateMachine:
             self.current_state = "test_finish_execution"
             printStateChange(f"[StateMachine::test_execution] [{capture_idx}] Switch to test_finish_execution. Waiting fo new test to start.")
             ## Wanna check with this current frame already
-            self.test_finish_execution_state(original_image, capture_idx, desnormalized_coord)
+            self.test_finish_execution_state(original_image, capture_idx, desnormalized_coord_list)
 
-    def test_finish_execution_state(self, original_image, capture_idx, desnormalized_coord):
+    def test_finish_execution_state(self, original_image, capture_idx, desnormalized_coord_list):
         
         self.board_metrics_now['end_capture'] = capture_idx
         self.board_metrics_store.append({f"{self.current_test_key['color']}_{self.current_test_key['shape']}": copy.deepcopy(self.board_metrics_now)})
@@ -289,7 +292,7 @@ class StateMachine:
         printStateChange(f"Fixation distribution of the {total_fixations} fixations involved. Frames with fixation data: {frames_with_fixation:3f}%")
         print(f"* Please note speed multiplier")
         log_table_data = []
-        log_table_headers = ['State Name', 'Fixation frames', 'Percent.']
+        log_table_headers = ['State Name', 'N Fixations', 'Percent.']
         for key, item in self.fixation_data_store.items():
             if key in ['total']:
                 continue

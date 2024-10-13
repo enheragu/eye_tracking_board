@@ -68,7 +68,7 @@ class BoardHandler:
         self.display_fixation = True                    # Display user fixation in the board
 
         self.board_contour = None
-        self.fixation_coord = None
+        self.fixation_coord_list = []
         self.cell_contours = None
 
         self.cell_matrix, self.cell_width, self.cell_height = None, None, None
@@ -99,11 +99,11 @@ class BoardHandler:
         
         self.cell_matrix, self.cell_width, self.cell_height = None, None, None
         if self.board_contour is not None and len(self.board_contour) != 0:
-            self.cell_matrix, self.cell_width, self.cell_height = self.computeBoardMatrix(self.board_contour, self.board_size)
+            self.cell_matrix, self.cell_width, self.cell_height = self.computeBoardMatrixFromContour(self.board_contour, self.board_size)
             self.board_data_dict = self.completeBoardConfig(self.cell_matrix, self.cell_width, self.cell_height, self.board_data_dict)
         
 
-    def handleVisualization(self, image, board_contour, board_size, cell_matrix, cell_contours, board_data_dict, fixation_coord):
+    def handleVisualization(self, image, board_contour, board_size, cell_matrix, cell_contours, board_data_dict, fixation_coord_list):
         display_cfg_board_view = image.copy()
         display_detected_board_view = image.copy()
 
@@ -140,11 +140,11 @@ class BoardHandler:
                         cv.putText(display_cfg_board_view, text2, org=text_origin2, fontFace=font, fontScale=scale, color=color, thickness=thickness, lineType=cv.LINE_AA)
                         cv.circle(display_cfg_board_view, center, radius=3, color=color, thickness=-1)
         
-        if self.display_fixation and fixation_coord is not None:
-            fixation_coord_tuple = (int(fixation_coord[0][0]), int(fixation_coord[0][1]))
-            cv.circle(display_cfg_board_view, fixation_coord_tuple, radius=10, color=(0,0,255), thickness=-1)
-            cv.circle(display_detected_board_view, fixation_coord_tuple, radius=10, color=(0,0,255), thickness=-1)
-            fixation_coord = None      # Reset fixation to be updated throguh function
+        if self.display_fixation:
+            for fixation_coord in fixation_coord_list:
+                fixation_coord_tuple = (int(fixation_coord[0][0]), int(fixation_coord[0][1]))
+                cv.circle(display_cfg_board_view, fixation_coord_tuple, radius=10, color=(0,0,255), thickness=-1)
+                cv.circle(display_detected_board_view, fixation_coord_tuple, radius=10, color=(0,0,255), thickness=-1)
       
         return display_cfg_board_view, display_detected_board_view
     
@@ -159,17 +159,18 @@ class BoardHandler:
             cell_matrix=self.cell_matrix, 
             cell_contours=self.cell_contours, 
             board_data_dict=self.board_data_dict,
-            fixation_coord=self.fixation_coord)
+            fixation_coord_list=self.fixation_coord_list)
 
     def getDistortedOriginalVisualization(self, undistorted_image):
         if self.board_contour is not None:
             board_contour_extended = interpolate_points(self.board_contour).astype(np.float32)
             undistorted_board_contour = self.distortion_handler.reverseCoordinates(board_contour_extended, homography = self.homography).astype(np.int32)
 
-            undistorted_fixation_coord = self.fixation_coord
-            if undistorted_fixation_coord is not None:
-                undistorted_fixation_coord = self.fixation_coord.astype(np.float32)
-                undistorted_fixation_coord = self.distortion_handler.reverseCoordinates(undistorted_fixation_coord, homography = self.homography).astype(np.int32)[0]
+            undistorted_fixation_coord_list = self.fixation_coord_list
+            if undistorted_fixation_coord_list:
+                for undistorted_fixation_coord in undistorted_fixation_coord_list:
+                    undistorted_fixation_coord = undistorted_fixation_coord.astype(np.float32)
+                    undistorted_fixation_coord = self.distortion_handler.reverseCoordinates(undistorted_fixation_coord, homography = self.homography).astype(np.int32)[0]
             
             undistorted_cell_matrix = self.cell_matrix
             if undistorted_cell_matrix is not None:
@@ -186,7 +187,7 @@ class BoardHandler:
                     contour_extended = interpolate_points(contour).astype(np.float32)
                     undistorted_cell_contours[index] = self.distortion_handler.reverseCoordinates(contour_extended, homography = self.homography).astype(np.int32)
 
-            return self.handleVisualization(undistorted_image, undistorted_board_contour, self.board_size, undistorted_cell_matrix, undistorted_cell_contours, self.board_data_dict, undistorted_fixation_coord)
+            return self.handleVisualization(undistorted_image, undistorted_board_contour, self.board_size, undistorted_cell_matrix, undistorted_cell_contours, self.board_data_dict, undistorted_fixation_coord_list)
 
         # If cannot plot any data...
         return undistorted_image, undistorted_image
@@ -218,29 +219,33 @@ class BoardHandler:
         Gets image coordinates and returns info about where in the board was it located
         (if its in the board at all)
     """
-    def getPixelInfo(self, coordinates):
-        self.fixation_coord = None
-        if coordinates is not None and self.board_contour is not None and len(self.board_contour) != 0 \
+    def getPixelInfo(self, coordinates_list):
+        self.fixation_coord_list = []
+        coord_info_list = []
+        if coordinates_list and self.board_contour is not None and len(self.board_contour) != 0 \
             and self.board_data_dict is not None:
-            
-            self.fixation_coord = self.distortion_handler.correctCoordinates(coordinates, self.homography)
-            # print(f'[BoardHandler::getPixelInfo] Original coordinates: {coordinates = }')
-            # print(f'[BoardHandler::getPixelInfo] Fixation projected: {self.fixation_coord = }')
-            idx = self.getCellIndex(self.fixation_coord)
-            # print(f'[BoardHandler::getPixelInfo] Cell index: {idx = }')
-            
-            if idx[0] is not None:
-                color = self.board_data_dict[idx][0]
-                shape = self.board_data_dict[idx][1]
-                slot = self.board_data_dict[idx][2]
-                board_coord = idx
-
-                print(f"[BoardHandler::getPixelInfo] Fixation detected in: {self.board_data_dict[idx]} in {board_coord}")
-                return color, shape, slot, board_coord
-            else:
-                print(f"[BoardHandler::getPixelInfo] Fixation not detected, coordinates not detected in board: {self.fixation_coord}")
+            print(f"[BoardHandler::getPixelInfo] Check {len(coordinates_list)} fixation for this frame.") 
+        
+            for coordinates in coordinates_list:
+                corrected_coord = self.distortion_handler.correctCoordinates(coordinates, self.homography)
+                self.fixation_coord_list.append(self.distortion_handler.correctCoordinates(coordinates, self.homography))
+                # print(f'[BoardHandler::getPixelInfo] Original coordinates: {coordinates = }')
+                # print(f'[BoardHandler::getPixelInfo] Fixation projected: {self.fixation_coord_list = }')
+                idx = self.getCellIndex(corrected_coord)
+                # print(f'[BoardHandler::getPixelInfo] Cell index: {idx = }')
                 
-        return None, None, None, None
+                if idx[0] is not None:
+                    color = self.board_data_dict[idx][0]
+                    shape = self.board_data_dict[idx][1]
+                    slot = self.board_data_dict[idx][2]
+                    board_coord = idx
+
+                    print(f"[BoardHandler::getPixelInfo] Fixation detected in: {self.board_data_dict[idx]} in {board_coord}.")
+                    coord_info_list.append((color, shape, slot, board_coord))
+                else:
+                    print(f"[BoardHandler::getPixelInfo] Fixation not detected, coordinates not detected in board: {corrected_coord}.")
+                
+        return coord_info_list
 
     ## FUNCTIONS BASED ON CONFIGURATION
     def parseCFGBoardData(self,game_configuration):
@@ -273,7 +278,7 @@ class BoardHandler:
 
         return board_size, board_size_mm, board_data_dict_upright, board_data_dict_rotated
     
-    def computeBoardMatrix(self, board_contour, board_size):
+    def computeBoardMatrixFromContour(self, board_contour, board_size):
         x, y, w, h = cv.boundingRect(board_contour)
 
         cell_width = w // board_size[0]

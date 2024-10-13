@@ -121,9 +121,9 @@ class PanelHandler:
         return shape_contour
     
 
-    def getPixelInfo(self, coordinates):
+    def getPixelInfo(self, coordinates_list):
 
-        if coordinates is not None:
+        if coordinates_list:
             pass
         shape, aruco, panel = False, False, False
         
