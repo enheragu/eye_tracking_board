@@ -6,6 +6,7 @@ PyYAML
 scikit-learn
 tabulate
 argparse
+pandas
 ## Pupil-labs .pldata handling
 rich
 msgpack>=1.0.0

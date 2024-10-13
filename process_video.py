@@ -15,7 +15,8 @@ from src.detect_shapes import detectColorSquares, isSlot
 from src.BoardHandler import BoardHandler
 from src.DistortionHandler import DistortionHandler
 from src.PanelHandler import PanelHandler
-from src.EyeDataHandler import EyeDataHandler
+# from src.EyeDataHandler import EyeDataHandlerCSV as EyeDataHandler
+from src.EyeDataHandler import EyeDataHandlerPLDATA as EyeDataHandler
 from src.ArucoBoardHandler import ARUCOColorCorrection
 from src.StateMachineHandler import StateMachine
 
@@ -37,7 +38,7 @@ participant_id = parser.parse_args().participant
 WINDOW_STREAM_CAMERA = f'Camera View {participant_id}'
 WINDOW_STREAM_BOARD = f'Board View {participant_id}'
 participant_path = f'/home/quique/eeha/eyes_board_color/data/{participant_id}/'
-data_path = participant_path #os.path.join(participant_path,'offline_data')
+data_path = participant_path #os.path.join(participant_path,'exports', '000')
 video_path = os.path.join(participant_path,'world.mp4')
 output_path = f'/home/quique/eeha/eyes_board_color/output/{participant_id}/'
 
@@ -46,7 +47,7 @@ print(f"Script root folder: {CURRENT_FILE_PATH}")
 game_configuration= os.path.join(CURRENT_FILE_PATH,'game_config.yaml')
 game_aruco_board_cfg= os.path.join(CURRENT_FILE_PATH,'game_aruco_board.yaml')
 samples_configuration= os.path.join(CURRENT_FILE_PATH,'sample_shape_cfg')
-eye_data_topic = 'fixations'
+eye_data_topic = 'gaze' #'fixations'
 frame_speed_multiplier = 1 # process one frame each N to go faster
 
 init_capture_idx = 0 #4300 #18700
@@ -182,7 +183,7 @@ def processVideo(video_path):
     
     eye_data_handler = EyeDataHandler(root_path=participant_path, data_path=data_path, video_fps=fps, topic_data=eye_data_topic)
 
-    state_machine_handler = StateMachine(board_handler,panel_handler,eye_data_handler)
+    state_machine_handler = StateMachine(board_handler,panel_handler,eye_data_handler, video_fps=fps)
     
     capture_idx = init_capture_idx
     stream.set(cv.CAP_PROP_POS_FRAMES, capture_idx)
@@ -229,7 +230,7 @@ def processVideo(video_path):
 
 
     os.makedirs(output_path, exist_ok=True)
-    state_machine_handler.log_results(fps, output_path=output_path)
+    state_machine_handler.log_results(output_path=output_path)
     
     
 

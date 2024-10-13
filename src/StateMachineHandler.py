@@ -21,9 +21,10 @@ def printStateChange(msg):
     State Machine that handles program execution
 """
 class StateMachine:
-    def __init__(self, board_handler, panel_handler, eye_data_handler):
+    def __init__(self, board_handler, panel_handler, eye_data_handler, video_fps):
         # Estado init
         self.current_state = "init"
+        self.video_fps = video_fps
 
         self.board_handler = board_handler
         self.panel_handler = panel_handler
@@ -48,12 +49,15 @@ class StateMachine:
 
 
         self.state_info = {
-            "init": {'callback': self.init_state, 'frame_mult': 15},
-            "get_test_name": {'callback': self.get_test_name_state, 'frame_mult': 4},
+            "init": {'callback': self.init_state, 'frame_mult': int(self.video_fps*0.7)},
+            "get_test_name": {'callback': self.get_test_name_state, 'frame_mult': int(self.video_fps*0.25)},
             "test_start_execution": {'callback': self.test_start_execution_state, 'frame_mult': 1},
             "test_execution": {'callback': self.test_execution_state, 'frame_mult': 1},
             "test_finish_execution": {'callback': self.test_finish_execution_state, 'frame_mult': 1} 
         }
+
+        frame_mult = [f"{state_key}: {state_data['frame_mult']} frame skip" for state_key, state_data in self.state_info.items()]
+        print("[StateMachine::__init__] Frame multiplication for each state:\n\t· " + '\n\t· '.join(frame_mult))
 
         state_keys = list(self.state_info.keys())
         # Storage for fixation analysis on each state
@@ -71,7 +75,7 @@ class StateMachine:
 
         panel_view = self.panel_handler.getVisualization()
         
-        if self.norm_coord_list:
+        if self.norm_coord_list and self.board_handler.display_fixation:
             for desnormalized_coord in self.desnormalized_coord_list:
                 cv.circle(image_board_cfg, desnormalized_coord[0], radius=5, color=(0,255,0), thickness=-1)
                 cv.circle(image_board_detected, desnormalized_coord[0], radius=5, color=(0,255,0), thickness=-1)
@@ -107,6 +111,16 @@ class StateMachine:
         #              debug_data_list=[None,debug_data],
         #              rows=2, cols=1, resize = 2/5)
         
+        # cv.imwrite('image_board_cfg.png',image_board_cfg)
+        # cv.imwrite('board_view_cfg.png',board_view_cfg)
+        # cv.imwrite('panel_view.png',panel_view)
+        # cv.imwrite('image_board_detected.png',image_board_detected)
+        # cv.imwrite('board_view_detected.png',board_view_detected)
+        # cv.imwrite('debug_data_view.png',debug_data_view)
+
+        # key = cv.waitKey()
+        # if key == ord('q') or key == ord('Q') or key == 27:
+        #     exit()
 
         return mosaic, cv.resize(mosaic, (frame_width*3, frame_height*2))
         
@@ -148,6 +162,8 @@ class StateMachine:
         if self.norm_coord_list: self.fixation_data_store[self.current_state] += len(self.norm_coord_list)
         self.frame_data_store[self.current_state] += 1
         self.frame_data_store['total'] += 1
+        
+        
         # key = cv.waitKey()
         # if key == ord('q') or key == ord('Q') or key == 27:
         #     exit()
@@ -231,7 +247,7 @@ class StateMachine:
         printStateChange(f"[StateMachine::test_finish_execution::] Switch to init.")
 
 
-    def log_results(self, video_fps, output_path):
+    def log_results(self, output_path):
         
         data_store = {'frames_info': self.frame_data_store, 'fixations_info': self.fixation_data_store, 'trials_data': self.board_metrics_store}
         with open(os.path.join(output_path,'data.pkl'), 'wb') as f:
@@ -246,7 +262,7 @@ class StateMachine:
         for index, test_metric in enumerate(self.board_metrics_store):
             board_metrics = list(test_metric.values())[0]
             board_test_name = list(test_metric.keys())[0]
-            duration_s = (board_metrics['end_capture']-board_metrics['init_capture'])/video_fps
+            duration_s = (board_metrics['end_capture']-board_metrics['init_capture'])/self.video_fps
             for color, color_item in board_metrics.items():
                 if color in ['init_capture', 'end_capture']:
                     continue
@@ -257,10 +273,10 @@ class StateMachine:
         with open(os.path.join(output_path,'trials_data.csv'), mode="w", newline="") as file:
             csv.writer(file).writerows(csv_data)
 
-        self.print_results(video_fps=video_fps)
+        self.print_results()
 
 
-    def print_results(self, video_fps):
+    def print_results(self):
         
         ## Prints fixation data :)
         total_fixations = self.fixation_data_store['total']
@@ -276,13 +292,13 @@ class StateMachine:
         print(f"* Please note speed multiplier")
         print(f"\t· Analyzed from frame {self.init_frame_number} to {self.last_frame_number}")
         print(f"\t· Total frames: {self.frame_data_store['total']}")
-        print(f"\t· Total time (s): {self.frame_data_store['total']/video_fps}")
+        print(f"\t· Total time (s): {self.frame_data_store['total']/self.video_fps}")
         log_table_data = []
         log_table_headers = ['State Name', 'N Frames', 'Percent.', 'Time (s)']
         for key, item in self.frame_data_store.items():
             if key in ['total']:
                 continue
-            log_table_data.append([key,item,f"{item/total_frames*100:3f}", item/video_fps])
+            log_table_data.append([key,item,f"{item/total_frames*100:3f}", item/self.video_fps])
         
         print(tabulate(log_table_data, headers=log_table_headers, tablefmt="pretty"))
         print("\n\n")
@@ -320,7 +336,7 @@ class StateMachine:
             table_width = len(formatted_table.splitlines()[1]) # Get length from dashes, which is second one
             title_dashes = '-' * ((table_width - len(test_tag)) // 2)
 
-            duration_s = (board_metrics['end_capture']-board_metrics['init_capture'])/video_fps
+            duration_s = (board_metrics['end_capture']-board_metrics['init_capture'])/self.video_fps
             printStateChange(f"{title_dashes}{test_tag}{title_dashes}")
             print(f"    - Started at {board_metrics['init_capture']} frame.")
             print(f"    - Ended at {board_metrics['end_capture']} frame.")

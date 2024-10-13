@@ -66,6 +66,7 @@ class BoardHandler:
         self.display_configuration_board_matrix = True  # Display matrix from configuration
         self.display_configuration_slots_info = True    # Display slot info from configuration
         self.display_fixation = True                    # Display user fixation in the board
+        self.display_arucos = True                      # Display ArucosDetected in the view
 
         self.board_contour = None
         self.fixation_coord_list = []
@@ -162,6 +163,8 @@ class BoardHandler:
             fixation_coord_list=self.fixation_coord_list)
 
     def getDistortedOriginalVisualization(self, undistorted_image):
+        display_cfg_board_view = undistorted_image
+        display_detected_board_view = undistorted_image
         if self.board_contour is not None:
             board_contour_extended = interpolate_points(self.board_contour).astype(np.float32)
             undistorted_board_contour = self.distortion_handler.reverseCoordinates(board_contour_extended, homography = self.homography).astype(np.int32)
@@ -187,10 +190,18 @@ class BoardHandler:
                     contour_extended = interpolate_points(contour).astype(np.float32)
                     undistorted_cell_contours[index] = self.distortion_handler.reverseCoordinates(contour_extended, homography = self.homography).astype(np.int32)
 
-            return self.handleVisualization(undistorted_image, undistorted_board_contour, self.board_size, undistorted_cell_matrix, undistorted_cell_contours, self.board_data_dict, undistorted_fixation_coord_list)
+            display_cfg_board_view, display_detected_board_view = self.handleVisualization(undistorted_image, undistorted_board_contour, self.board_size, undistorted_cell_matrix, undistorted_cell_contours, self.board_data_dict, undistorted_fixation_coord_list)
+
+            if self.display_arucos:
+                aruco_list, _ =self.aruco_board_handler.detectArucos(undistorted_image)
+                for aruco_data in aruco_list:
+                    aruco_id = np.array([[aruco_data['id']]], dtype=np.int32)
+                    aruco_corners = aruco_data['points_image'].reshape((1, 4, 2))                    
+                    cv.aruco.drawDetectedMarkers(image=display_cfg_board_view, corners=[aruco_corners], ids=aruco_id, borderColor=(0,0,255))
+                    cv.aruco.drawDetectedMarkers(image=display_detected_board_view, corners=[aruco_corners], ids=aruco_id, borderColor=(0,0,255))
 
         # If cannot plot any data...
-        return undistorted_image, undistorted_image
+        return display_cfg_board_view, display_detected_board_view
 
     def computeApplyHomography(self, undistorted_image):
         ## Version detecting contour of black edges of the game
@@ -240,10 +251,10 @@ class BoardHandler:
                     slot = self.board_data_dict[idx][2]
                     board_coord = idx
 
-                    print(f"[BoardHandler::getPixelInfo] Fixation detected in: {self.board_data_dict[idx]} in {board_coord}.")
+                    print(f"\t\t· Fixation detected in: {self.board_data_dict[idx]} in {board_coord}.")
                     coord_info_list.append((color, shape, slot, board_coord))
                 else:
-                    print(f"[BoardHandler::getPixelInfo] Fixation not detected, coordinates not detected in board: {corrected_coord}.")
+                    print(f"\t\t· Fixation not detected, coordinates not detected in board: {corrected_coord}.")
                 
         return coord_info_list
 
