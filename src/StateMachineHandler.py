@@ -255,13 +255,13 @@ class StateMachine:
         logStateChange(f"[StateMachine::test_finish_execution::] Switch to init.")
 
 
-    def store_results(self, output_path):
+    def store_results(self, output_path, participant_id = ""):
         
         data_store = {'frames_info': self.frame_data_store, 'fixations_info': self.fixation_data_store, 'trials_data': self.board_metrics_store}
-        with open(os.path.join(output_path,'data.pkl'), 'wb') as f:
+        with open(os.path.join(output_path,f'data_{participant_id}.pkl'), 'wb') as f:
             pickle.dump(data_store, f)
             
-        with open(os.path.join(output_path,'data.yaml'), 'w') as file:
+        with open(os.path.join(output_path,f'data_{participant_id}.yaml'), 'w') as file:
             yaml.dump(data_store, file, default_flow_style=False)
 
         ## CSV trials
@@ -277,11 +277,11 @@ class StateMachine:
                 for shape, shape_item in color_item.items():
                     csv_data.append([index, board_test_name, color, shape, shape_item[True], shape_item[False], duration_s])
             
-        with open(os.path.join(output_path,'trials_data.csv'), mode="w", newline="") as file:
+        with open(os.path.join(output_path,f'trials_data_{participant_id}.csv'), mode="w", newline="") as file:
             csv.writer(file).writerows(csv_data)
 
         terminal_log = self.print_results()
-        with open(os.path.join(output_path,'result_log.txt'), 'w') as file:
+        with open(os.path.join(output_path,f'result_log_{participant_id}.txt'), 'w') as file:
             file.write(terminal_log)
 
 

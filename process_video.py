@@ -233,7 +233,7 @@ def processVideo(video_path):
     if writer.isOpened():  writer.release()
     cv.destroyAllWindows()
 
-    state_machine_handler.store_results(output_path=output_path)
+    state_machine_handler.store_results(output_path=output_path, participant_id=participant_id)
     
     
 if __name__ == "__main__":
