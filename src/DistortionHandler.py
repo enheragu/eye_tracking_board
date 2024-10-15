@@ -5,6 +5,7 @@ import os
 import json
 import cv2 as cv
 import numpy as np
+from src.utils import log
 
 
 """
@@ -25,10 +26,10 @@ class DistortionHandler():
                 cameraMatrix = np.array(data['camera_matrix'])
                 distCoeffs = np.array(data['distortion_coefficients'])
 
-                print(f'Camera matrix: \n{cameraMatrix}')
-                print(f'distortion_coefficients: \t{distCoeffs}')
+                log(f'Camera matrix: \n{cameraMatrix}')
+                log(f'distortion_coefficients: \t{distCoeffs}')
             except:
-                print("Calibration file not valid.")
+                log("Calibration file not valid.")
         return cameraMatrix, distCoeffs
 
     def undistortImageParams(self, frame_height, frame_width):

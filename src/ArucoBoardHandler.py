@@ -13,7 +13,7 @@ import yaml
 from yaml.loader import SafeLoader
 
 from src.utils import projectCenter
-
+from src.utils import log
 
 """
     Based on aruco markers detected, take white pixels and average the color correction
@@ -162,7 +162,7 @@ class ArucoBoardHandler:
                     rotated_arucos += 1
         
         if rotated_arucos >= len(self.aruco_config)*0.5:
-            # print(f"Need rotation! {rotated_arucos} out of {len(detected_aruco_list)}")
+            # log(f"Need rotation! {rotated_arucos} out of {len(detected_aruco_list)}")
             need_rotation = True
         else:
             need_rotation = False

@@ -9,6 +9,7 @@ import json
 from multiprocessing import Pool
 from tqdm import tqdm
 
+from src.utils import log
 
 # Calibrate camera with stored image files (calibration pattern)
 calibration_video_path = './calibration.mp4'
@@ -47,7 +48,7 @@ if __name__ == "__main__":
 
     stream = cv.VideoCapture(calibration_video_path)
     if not stream.isOpened():
-        print(f"Could not open video {calibration_video_path}")
+        log(f"Could not open video {calibration_video_path}")
         exit()
 
     total_frames = int(stream.get(cv.CAP_PROP_FRAME_COUNT))  # Total de frames si es un archivo de video
@@ -57,7 +58,7 @@ if __name__ == "__main__":
         stream.set(cv.CAP_PROP_POS_FRAMES, frame_count)
         ret, image = stream.read()
         if not ret:
-            print("Can't receive frame (stream end?). Exiting ...")
+            log("Can't receive frame (stream end?). Exiting ...")
             break
         
         gray_image = cv.cvtColor(image, cv.COLOR_BGR2GRAY)
@@ -65,7 +66,7 @@ if __name__ == "__main__":
         patternWasFound, corners = cv.findChessboardCorners(gray_image, patternSize)
 
         if patternWasFound:
-            # print(f"Corners found in image: {file_path}")
+            # log(f"Corners found in image: {file_path}")
             num_patterns += 1
             termCriteria = (cv.TERM_CRITERIA_EPS + cv.TERM_CRITERIA_MAX_ITER, 50, 0.001)
             corners = cv.cornerSubPix(gray_image, corners, winSize=(11,11), zeroZone=(-1,-1), criteria=termCriteria)
@@ -81,7 +82,7 @@ if __name__ == "__main__":
                 cv.circle(image, (int(x), int(y)), 3, (0, 255, 0), thickness=20)  # Dibuja un círculo en cada esquina
         
         else:
-            print(f"No corners found in capture")
+            log(f"No corners found in capture")
         
         text = f"{frame_count}/{total_frames}" if total_frames > 0 else f"{frame_count}/?"
         cv.putText(image, text, org=(10,30), fontFace=cv.FONT_HERSHEY_SIMPLEX, fontScale=1, color=(0,0,255), thickness=2, lineType=cv.LINE_AA)
@@ -96,18 +97,18 @@ if __name__ == "__main__":
 
 
     if num_patterns >= 3:
-        print(f'Detected {num_patterns} patterns. Computing calibration matrix.')
+        log(f'Detected {num_patterns} patterns. Computing calibration matrix.')
         # imageSize:  (cols, rows)
         termCriteria = (cv.TERM_CRITERIA_EPS + cv.TERM_CRITERIA_MAX_ITER, 50, 0.001)
         cameraMatrix = np.array([])
         distCoeffs = np.array([])
         rms, cameraMatrix, distCoeffs, rvecs, tvecs = cv.calibrateCamera(objpoints, imgpoints, imageSize=gray_image.shape[::-1],
                                                         cameraMatrix=None, distCoeffs=None, flags=0, criteria=termCriteria)
-        print(f"Used {num_patterns} patterns for camera calibration")
-        print(f"RMS reprojection error: {rms} pixels")
+        log(f"Used {num_patterns} patterns for camera calibration")
+        log(f"RMS reprojection error: {rms} pixels")
 
-        print('Camera matrix:', cameraMatrix)
-        print('distortion_coefficients:', distCoeffs)
+        log('Camera matrix:', cameraMatrix)
+        log('distortion_coefficients:', distCoeffs)
         
         # store calibration data in a JSON file
         with open('camera_calib.json', 'w') as file:
@@ -115,6 +116,6 @@ if __name__ == "__main__":
                     'distortion_coefficients': distCoeffs.tolist()}, file)
             
     else:
-        print('Not enough patterns detected.')
+        log('Not enough patterns detected.')
 
     cv.destroyAllWindows()

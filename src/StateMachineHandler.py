@@ -13,10 +13,18 @@ import yaml
 from tabulate import tabulate
 
 from src.utils import getMosaic, bcolors
+from src.utils import log
+
+def bufferStateChangeMsg(msg):
+    return f"{bcolors.BOLD}{bcolors.OKCYAN}{msg}{bcolors.ENDC}\n"
+
+def bufferMsg(msg):
+    return f"{msg}\n"
+
+def logStateChange(msg):
+    log(f"{bcolors.BOLD}{bcolors.OKCYAN}{msg}{bcolors.ENDC}")
 
 
-def printStateChange(msg):
-    print(f"{bcolors.BOLD}{bcolors.OKCYAN}{msg}{bcolors.ENDC}")
 """
     State Machine that handles program execution
 """
@@ -57,7 +65,7 @@ class StateMachine:
         }
 
         frame_mult = [f"{state_key}: {state_data['frame_mult']} frame skip" for state_key, state_data in self.state_info.items()]
-        print("[StateMachine::__init__] Frame multiplication for each state:\n\t· " + '\n\t· '.join(frame_mult))
+        log("[StateMachine::__init__] Frame multiplication for each state:\n\t· " + '\n\t· '.join(frame_mult))
 
         state_keys = list(self.state_info.keys())
         # Storage for fixation analysis on each state
@@ -147,14 +155,14 @@ class StateMachine:
         self.norm_coord_list = self.eye_data_handler.step(capture_idx)
         self.desnormalized_coord_list = []
         for norm_coord in self.norm_coord_list:
-            # print(f'{capture_idx =}')
+            # log(f'{capture_idx =}')
             desnormalized_x = int(norm_coord[0] * original_image.shape[1])
             desnormalized_y = int(norm_coord[1] * original_image.shape[0])
             self.desnormalized_coord_list.append(np.array([[desnormalized_x, desnormalized_y]]))
             self.fixation_data_store['total'] += 1
         
-        # print(f'{norm_coord = }')
-        # print(f'{desnormalized_coord_list = }')
+        # log(f'{norm_coord = }')
+        # log(f'{desnormalized_coord_list = }')
 
         self.state_info[self.current_state]['callback'](original_image, capture_idx, self.desnormalized_coord_list)
         self.frame_speed_multiplier = self.state_info[self.current_state]['frame_mult']
@@ -176,14 +184,14 @@ class StateMachine:
         if current_panel is not None:
             self.current_test_key = current_panel
             self.current_state = "get_test_name"
-            printStateChange(f"[StateMachine::init_state] [{capture_idx}] Switch to get_test_name state. Test panel detected.")
+            logStateChange(f"[StateMachine::init_state] [{capture_idx}] Switch to get_test_name state. Test panel detected.")
 
     def get_test_name_state(self, original_image, capture_idx, desnormalized_coord_list):
         
         current_panel = self.processPanel(original_image, capture_idx, desnormalized_coord_list)
         if current_panel is None:
             self.current_state = "test_start_execution"
-            printStateChange(f"[StateMachine::get_test_name] [{capture_idx}] Switch to test_start_execution. Gathering data for test {self.current_test_key['shape']} {self.current_test_key['color']}")
+            logStateChange(f"[StateMachine::get_test_name] [{capture_idx}] Switch to test_start_execution. Gathering data for test {self.current_test_key['shape']} {self.current_test_key['color']}")
 
     def test_start_execution_state(self, original_image, capture_idx, desnormalized_coord_list):
         
@@ -199,7 +207,7 @@ class StateMachine:
         if self.board_handler.isContourDetected():
             self.board_contour_detected_counter = 0
             self.current_state = "test_execution"
-            printStateChange(f"[StateMachine::test_start_execution] [{capture_idx}] Switch to test_execution. Gathering data for test {self.current_test_key['shape']} {self.current_test_key['color']}")
+            logStateChange(f"[StateMachine::test_start_execution] [{capture_idx}] Switch to test_execution. Gathering data for test {self.current_test_key['shape']} {self.current_test_key['color']}")
             ## Wanna check with this current frame already
             self.test_execution_state(original_image, capture_idx, desnormalized_coord_list)
 
@@ -232,7 +240,7 @@ class StateMachine:
         if self.board_contour_nondetected_counter > self.board_contour_switch_state_threshold:
             self.board_contour_nondetected_counter = 0
             self.current_state = "test_finish_execution"
-            printStateChange(f"[StateMachine::test_execution] [{capture_idx}] Switch to test_finish_execution. Waiting fo new test to start.")
+            logStateChange(f"[StateMachine::test_execution] [{capture_idx}] Switch to test_finish_execution. Waiting fo new test to start.")
             ## Wanna check with this current frame already
             self.test_finish_execution_state(original_image, capture_idx, desnormalized_coord_list)
 
@@ -244,10 +252,10 @@ class StateMachine:
         self.current_test_key = None
 
         self.current_state = "init"
-        printStateChange(f"[StateMachine::test_finish_execution::] Switch to init.")
+        logStateChange(f"[StateMachine::test_finish_execution::] Switch to init.")
 
 
-    def log_results(self, output_path):
+    def store_results(self, output_path):
         
         data_store = {'frames_info': self.frame_data_store, 'fixations_info': self.fixation_data_store, 'trials_data': self.board_metrics_store}
         with open(os.path.join(output_path,'data.pkl'), 'wb') as f:
@@ -268,31 +276,33 @@ class StateMachine:
                     continue
                 for shape, shape_item in color_item.items():
                     csv_data.append([index, board_test_name, color, shape, shape_item[True], shape_item[False], duration_s])
-
             
         with open(os.path.join(output_path,'trials_data.csv'), mode="w", newline="") as file:
             csv.writer(file).writerows(csv_data)
 
-        self.print_results()
+        terminal_log = self.print_results()
+        with open(os.path.join(output_path,'result_log.txt'), 'w') as file:
+            file.write(terminal_log)
 
 
     def print_results(self):
         
-        ## Prints fixation data :)
+        ## logs fixation data :)
         total_fixations = self.fixation_data_store['total']
         frames_with_fixation = (total_fixations/self.frame_data_store['total'])*100
         
-        printStateChange(f"#############################")
-        printStateChange(f"##      Result report      ##")
-        printStateChange(f"#############################\n")
+        terminal_log = str()
+        terminal_log += bufferStateChangeMsg(f"#############################")
+        terminal_log += bufferStateChangeMsg(f"##      Result report      ##")
+        terminal_log += bufferStateChangeMsg(f"#############################\n")
 
-        ## Prints table with frame distribution
+        ## logs table with frame distribution
         total_frames = self.frame_data_store['total']
-        printStateChange(f"Frames distribution of the {total_frames} fixations involved.")
-        print(f"* Please note speed multiplier")
-        print(f"\t· Analyzed from frame {self.init_frame_number} to {self.last_frame_number}")
-        print(f"\t· Total frames: {self.frame_data_store['total']}")
-        print(f"\t· Total time (s): {self.frame_data_store['total']/self.video_fps}")
+        terminal_log += bufferStateChangeMsg(f"Frames distribution of the {total_frames} fixations involved.")
+        terminal_log += bufferMsg(f"* Please note speed multiplier")
+        terminal_log += bufferMsg(f"\t· Analyzed from frame {self.init_frame_number} to {self.last_frame_number}")
+        terminal_log += bufferMsg(f"\t· Total frames: {self.frame_data_store['total']}")
+        terminal_log += bufferMsg(f"\t· Total time (s): {self.frame_data_store['total']/self.video_fps}")
         log_table_data = []
         log_table_headers = ['State Name', 'N Frames', 'Percent.', 'Time (s)']
         for key, item in self.frame_data_store.items():
@@ -300,13 +310,13 @@ class StateMachine:
                 continue
             log_table_data.append([key,item,f"{item/total_frames*100:3f}", item/self.video_fps])
         
-        print(tabulate(log_table_data, headers=log_table_headers, tablefmt="pretty"))
-        print("\n\n")
+        terminal_log += bufferMsg(tabulate(log_table_data, headers=log_table_headers, tablefmt="pretty"))
+        terminal_log += bufferMsg("\n\n")
 
 
-        ## Prints table with fixation distribution
-        printStateChange(f"Fixation distribution of the {total_fixations} fixations involved. Frames with fixation data: {frames_with_fixation:3f}%")
-        print(f"* Please note speed multiplier")
+        ## logs table with fixation distribution
+        terminal_log += bufferStateChangeMsg(f"Fixation distribution of the {total_fixations} fixations involved. Frames with fixation data: {frames_with_fixation:3f}%")
+        terminal_log += bufferMsg(f"* Please note speed multiplier")
         log_table_data = []
         log_table_headers = ['State Name', 'N Fixations', 'Percent.']
         for key, item in self.fixation_data_store.items():
@@ -314,11 +324,11 @@ class StateMachine:
                 continue
             log_table_data.append([key,item,f"{item/total_fixations*100:3f}"])
         
-        print(tabulate(log_table_data, headers=log_table_headers, tablefmt="pretty"))
-        print("\n\n")
+        terminal_log += bufferMsg(tabulate(log_table_data, headers=log_table_headers, tablefmt="pretty"))
+        terminal_log += bufferMsg("\n\n")
 
 
-        ## Prints data of each trial
+        ## logs data of each trial
         for index, test_metric in enumerate(self.board_metrics_store):
             board_metrics = list(test_metric.values())[0]
             test_tag = f"[Trial {index}] Search for {list(test_metric.keys())[0]} "
@@ -337,15 +347,19 @@ class StateMachine:
             title_dashes = '-' * ((table_width - len(test_tag)) // 2)
 
             duration_s = (board_metrics['end_capture']-board_metrics['init_capture'])/self.video_fps
-            printStateChange(f"{title_dashes}{test_tag}{title_dashes}")
-            print(f"    - Started at {board_metrics['init_capture']} frame.")
-            print(f"    - Ended at {board_metrics['end_capture']} frame.")
-            print(f"    - Took {board_metrics['end_capture']-board_metrics['init_capture']} frames. ({duration_s} s)")
+            terminal_log += bufferStateChangeMsg(f"{title_dashes}{test_tag}{title_dashes}")
+            terminal_log += bufferMsg(f"    - Started at {board_metrics['init_capture']} frame.")
+            terminal_log += bufferMsg(f"    - Ended at {board_metrics['end_capture']} frame.")
+            terminal_log += bufferMsg(f"    - Took {board_metrics['end_capture']-board_metrics['init_capture']} frames. ({duration_s} s)")
             for line in formatted_table.splitlines():
-                print(line)
-            print("\n\n")
+                terminal_log += bufferMsg(line)
+            terminal_log += bufferMsg("\n\n")
+
+
+        log(terminal_log)
+        return terminal_log
         
-        return 
+
         for color, shapes_dict in self.board_metrics_store.items():
             time_color = 0
             for shape, slot_dict in shapes_dict.items():
@@ -353,8 +367,8 @@ class StateMachine:
                     num = float(num)/float(video_fps)
                     time_color += num
 
-            print(f'------------------------------')
-            print(f'Color: {color}: {time_color}s')
+            log(f'------------------------------')
+            log(f'Color: {color}: {time_color}s')
             for shape, slot_dict in shapes_dict.items():
                 for slot, num in slot_dict.items():
-                    print(f'Shape: {shape} ({slot}): {num}s')
+                    log(f'Shape: {shape} ({slot}): {num}s')

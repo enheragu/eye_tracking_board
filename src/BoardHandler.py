@@ -12,7 +12,7 @@ from yaml.loader import SafeLoader
 
 from src.ArucoBoardHandler import ArucoBoardHandler, aruco_board_transform
 
-from src.utils import interpolate_points, getMaskHue
+from src.utils import interpolate_points, getMaskHue, log
 from src.detect_shapes import checkShape
 
 def getCellWH(cell_matrix, i, j):
@@ -118,7 +118,7 @@ class BoardHandler:
                 for j in range(board_size[0]):
                     x, y = cell_matrix[i, j]
                     w,h = getCellWH(cell_matrix=cell_matrix, i=i, j=j)
-                    # print(f'[{i},{j}] in {(x+5-w/2,y+12-h/2)}')
+                    # log(f'[{i},{j}] in {(x+5-w/2,y+12-h/2)}')
                     cv.putText(display_cfg_board_view, f'[{i},{j}]', org=(int(x+5-w/2),int(y+12-h/2)), fontFace=cv.FONT_HERSHEY_SIMPLEX, fontScale=0.3, color=(0, 255, 0), thickness=1, lineType=cv.LINE_AA)
         
         if self.display_configuration_slots_info and board_data_dict is not None \
@@ -169,11 +169,13 @@ class BoardHandler:
             board_contour_extended = interpolate_points(self.board_contour).astype(np.float32)
             undistorted_board_contour = self.distortion_handler.reverseCoordinates(board_contour_extended, homography = self.homography).astype(np.int32)
 
-            undistorted_fixation_coord_list = self.fixation_coord_list
-            if undistorted_fixation_coord_list:
-                for undistorted_fixation_coord in undistorted_fixation_coord_list:
-                    undistorted_fixation_coord = undistorted_fixation_coord.astype(np.float32)
-                    undistorted_fixation_coord = self.distortion_handler.reverseCoordinates(undistorted_fixation_coord, homography = self.homography).astype(np.int32)[0]
+            undistorted_fixation_coord_list = []
+            ## Disabled for now, needs correction in the revers coordinate computation
+            # undistorted_fixation_coord_list = self.fixation_coord_list
+            # if undistorted_fixation_coord_list:
+            #     for undistorted_fixation_coord in undistorted_fixation_coord_list:
+            #         undistorted_fixation_coord = undistorted_fixation_coord.astype(np.float32)
+            #         undistorted_fixation_coord = self.distortion_handler.reverseCoordinates(undistorted_fixation_coord, homography = self.homography).astype(np.int32)[0]
             
             undistorted_cell_matrix = self.cell_matrix
             if undistorted_cell_matrix is not None:
@@ -197,7 +199,7 @@ class BoardHandler:
                 for aruco_data in aruco_list:
                     aruco_id = np.array([[aruco_data['id']]], dtype=np.int32)
                     aruco_corners = aruco_data['points_image'].reshape((1, 4, 2))                    
-                    cv.aruco.drawDetectedMarkers(image=display_cfg_board_view, corners=[aruco_corners], ids=aruco_id, borderColor=(0,0,255))
+                    # cv.aruco.drawDetectedMarkers(image=display_cfg_board_view, corners=[aruco_corners], ids=aruco_id, borderColor=(0,0,255))
                     cv.aruco.drawDetectedMarkers(image=display_detected_board_view, corners=[aruco_corners], ids=aruco_id, borderColor=(0,0,255))
 
         # If cannot plot any data...
@@ -235,15 +237,15 @@ class BoardHandler:
         coord_info_list = []
         if coordinates_list and self.board_contour is not None and len(self.board_contour) != 0 \
             and self.board_data_dict is not None:
-            print(f"[BoardHandler::getPixelInfo] Check {len(coordinates_list)} fixation for this frame.") 
+            log(f"[BoardHandler::getPixelInfo] Check {len(coordinates_list)} fixation for this frame.") 
         
             for coordinates in coordinates_list:
                 corrected_coord = self.distortion_handler.correctCoordinates(coordinates, self.homography)
                 self.fixation_coord_list.append(self.distortion_handler.correctCoordinates(coordinates, self.homography))
-                # print(f'[BoardHandler::getPixelInfo] Original coordinates: {coordinates = }')
-                # print(f'[BoardHandler::getPixelInfo] Fixation projected: {self.fixation_coord_list = }')
+                # log(f'[BoardHandler::getPixelInfo] Original coordinates: {coordinates = }')
+                # log(f'[BoardHandler::getPixelInfo] Fixation projected: {self.fixation_coord_list = }')
                 idx = self.getCellIndex(corrected_coord)
-                # print(f'[BoardHandler::getPixelInfo] Cell index: {idx = }')
+                # log(f'[BoardHandler::getPixelInfo] Cell index: {idx = }')
                 
                 if idx[0] is not None:
                     color = self.board_data_dict[idx][0]
@@ -251,10 +253,11 @@ class BoardHandler:
                     slot = self.board_data_dict[idx][2]
                     board_coord = idx
 
-                    print(f"\t\t· Fixation detected in: {self.board_data_dict[idx]} in {board_coord}.")
+                    log(f"\t\t· Fixation detected in: {self.board_data_dict[idx]} in {board_coord}.")
                     coord_info_list.append((color, shape, slot, board_coord))
                 else:
-                    print(f"\t\t· Fixation not detected, coordinates not detected in board: {corrected_coord}.")
+                    log(f"\t\t· Fixation not detected, coordinates not detected in board: {corrected_coord}.")
+                    coord_info_list.append(('not_board', 'not_board', False, [-1,-1]))
                 
         return coord_info_list
 
@@ -383,8 +386,8 @@ class BoardHandler:
         s_margins = [min(0, mean_s-4*std_s), min(255, mean_s+4*std_s)]
         v_margins = [min(0, mean_v-4*std_v), min(255, mean_v+4*std_v)]
 
-        # print(f"{mean_h = }\t{mean_s = }\t{mean_v = }")
-        # print(f"{std_h = }\t{std_s = }\t{std_v = }")
+        # log(f"{mean_h = }\t{mean_s = }\t{mean_v = }")
+        # log(f"{std_h = }\t{std_s = }\t{std_v = }")
         
         # Take any hue with low brightness
         # res = getMaskHue(hue, sat, intensity, h_ref=0, h_epsilon=180, s_margins=[0,255], v_margins = [0,90])
@@ -418,6 +421,6 @@ class BoardHandler:
         # contours_dict = detectColorSquares(capture, color_dict=color_dict, colors_list=colors_list, display_image=None)
         # for color, contour_list in contours_dict.items():
         #     for contour in contour_list:
-        #         # print(f'Detect shape for {color} and contour {contour}')
+        #         # log(f'Detect shape for {color} and contour {contour}')
         #         is_slot, center = isSlot(capture, contour, color_dict[color], colors_list[color], display_image=None)
         #         detected_board_data.append([is_slot, center])
