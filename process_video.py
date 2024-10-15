@@ -6,11 +6,14 @@ import math
 import random
 import argparse
 
+from tqdm import tqdm
+
 import cv2 as cv
 import numpy as np
 from sklearn.decomposition import PCA
 
 from src.detect_shapes import detectColorSquares, isSlot
+from src.utils import log
 
 from src.BoardHandler import BoardHandler
 from src.DistortionHandler import DistortionHandler
@@ -20,6 +23,8 @@ from src.EyeDataHandler import EyeDataHandlerPLDATA as EyeDataHandler
 from src.ArucoBoardHandler import ARUCOColorCorrection
 from src.StateMachineHandler import StateMachine
 
+
+CURRENT_FILE_PATH = os.path.dirname(os.path.abspath(__file__))
 
 # Hue in degrees (0-360); epsilon in degrees too
 colors_dict = {'red':    {'h': 350, 'eps': 29}, 
@@ -37,16 +42,18 @@ participant_id = parser.parse_args().participant
 
 WINDOW_STREAM_CAMERA = f'Camera View {participant_id}'
 WINDOW_STREAM_BOARD = f'Board View {participant_id}'
-participant_path = f'/home/quique/eeha/eyes_board_color/data/{participant_id}/'
+
+participant_path = os.path.join(CURRENT_FILE_PATH,f'data/{participant_id}')
 data_path = participant_path #os.path.join(participant_path,'exports', '000')
 video_path = os.path.join(participant_path,'world.mp4')
-output_path = f'/home/quique/eeha/eyes_board_color/output/{participant_id}/'
 
-CURRENT_FILE_PATH = os.path.dirname(os.path.abspath(__file__))
-print(f"Script root folder: {CURRENT_FILE_PATH}")
-game_configuration= os.path.join(CURRENT_FILE_PATH,'game_config.yaml')
-game_aruco_board_cfg= os.path.join(CURRENT_FILE_PATH,'game_aruco_board.yaml')
-samples_configuration= os.path.join(CURRENT_FILE_PATH,'sample_shape_cfg')
+log(f"Script root folder: {CURRENT_FILE_PATH}")
+output_path = os.path.join(CURRENT_FILE_PATH,f'output/{participant_id}/')
+os.makedirs(output_path, exist_ok=True)
+
+game_configuration= os.path.join(CURRENT_FILE_PATH,'cfg/game_config.yaml')
+game_aruco_board_cfg= os.path.join(CURRENT_FILE_PATH,'cfg/game_aruco_board.yaml')
+samples_configuration= os.path.join(CURRENT_FILE_PATH,'cfg/sample_shape_cfg')
 eye_data_topic = 'gaze' #'fixations'
 frame_speed_multiplier = 1 # process one frame each N to go faster
 
@@ -65,9 +72,9 @@ def mouse_callback(event, x, y, flags, param):
         image = mouse_callback_image
         hsv_image = cv.cvtColor(image, cv.COLOR_BGR2HSV_FULL)
         h, s, v = hsv_image[y, x]
-        print(f'Hue: {int(h/255.0*360)}, Saturation: {s}, Value: {v}')
+        log(f'Hue: {int(h/255.0*360)}, Saturation: {s}, Value: {v}')
     if event == cv.EVENT_LBUTTONDOWN and mouse_callback_image is None:
-        print(f'No image provided to detect HSV components.')
+        log(f'No image provided to detect HSV components.')
 
 # cv.setMouseCallback(WINDOW_STREAM_CAMERA, mouse_callback)
 cv.setMouseCallback(WINDOW_STREAM_BOARD, mouse_callback)
@@ -102,8 +109,8 @@ def checkBoardMatch(contours, data_dict, board_size):
     max_vals = np.max(reconstructed_points, axis=0)
     min_vals = np.min(reconstructed_points, axis=0)
 
-    print(f"{len(reconstructed_points)}")
-    print(f"{min_vals = }; {max_vals = }")
+    log(f"{len(reconstructed_points)}")
+    log(f"{min_vals = }; {max_vals = }")
 
     # Get averaged min distances to compute distance in X and Y between boxes 
     dist_x = []
@@ -128,25 +135,25 @@ def checkBoardMatch(contours, data_dict, board_size):
     matriz = np.full(board_size, None)
     for i, point in enumerate(reconstructed_points):
         index = int(point[0] - min_vals[0]- dist[0]), int(point[1] - min_vals[1]- dist[1])
-        print(f"{point = }")
-        print(f"[{point[0] - min_vals[0]}, {point[1] - min_vals[1]}]: {center_list[i]}")
+        log(f"{point = }")
+        log(f"[{point[0] - min_vals[0]}, {point[1] - min_vals[1]}]: {center_list[i]}")
         matriz[index] = tuple(center_list[i])
 
 
-    print(matriz)
+    log(matriz)
     exit()
 
     for center, data in coordinates.items():
         index = tuple((0,0))
         coordinates_idx[index] = data.update({'center':center})
-        print(f"{index}: 'center':{data['center']}, 'color': {data['color']}")
+        log(f"{index}: 'center':{data['center']}, 'color': {data['color']}")
 
         if index not in data_dict:
-            print(f"ERROR could not locate {index} in board dict")
+            log(f"ERROR could not locate {index} in board dict")
             continue
 
         if not data['color'] is data_dict[index][0]: # Check if color matches
-            print(f"Color does not match: {data['color'] = }; {data_dict[index][0] = }")
+            log(f"Color does not match: {data['color'] = }; {data_dict[index][0] = }")
 
 
 
@@ -156,20 +163,20 @@ def processVideo(video_path):
 
     stream = cv.VideoCapture(video_path)
     if not stream.isOpened():
-        print(f"Could not open video {video_path}")
+        log(f"Could not open video {video_path}")
         exit()
 
     total_frames = int(stream.get(cv.CAP_PROP_FRAME_COUNT))
-    print(f'[processVideo::{participant_id}] Processing participant: {participant_id}')
-    print(f'[processVideo::{participant_id}] Processing: {video_path}')
-    print(f'[processVideo::{participant_id}] Video with: {total_frames} frames')
+    log(f'[processVideo::{participant_id}] Processing participant: {participant_id}')
+    log(f'[processVideo::{participant_id}] Processing: {video_path}')
+    log(f'[processVideo::{participant_id}] Video with: {total_frames} frames')
 
     fps = stream.get(cv.CAP_PROP_FPS)
     frame_width = int(stream.get(cv.CAP_PROP_FRAME_WIDTH))
     frame_height = int(stream.get(cv.CAP_PROP_FRAME_HEIGHT))
-    print(f"[processVideo::{participant_id}] Processing video of {fps} FPS and {frame_width = }; {frame_height = }")
-    print(f"[processVideo::{participant_id}] Processing video duration {total_frames/fps} seconds")
-    writer = cv.VideoWriter('./result.mp4', cv.VideoWriter_fourcc(*'mp4v'), int(fps/frame_speed_multiplier), (frame_width*3, frame_height*2))
+    log(f"[processVideo::{participant_id}] Processing video of {fps} FPS and {frame_width = }; {frame_height = }")
+    log(f"[processVideo::{participant_id}] Processing video duration {total_frames/fps} seconds")
+    writer = cv.VideoWriter(os.path.join(output_path,f'debug_{participant_id}.mp4'), cv.VideoWriter_fourcc(*'mp4v'), int(fps/frame_speed_multiplier), (frame_width*3, frame_height*2))
 
     distortion_handler = DistortionHandler(calibration_json_path='camera_calib.json', 
                                            frame_width=frame_width, frame_height=frame_height)
@@ -188,52 +195,46 @@ def processVideo(video_path):
     capture_idx = init_capture_idx
     stream.set(cv.CAP_PROP_POS_FRAMES, capture_idx)
 
-    while True:
-        if capture_idx >= total_frames:
-            print(f"[processVideo::{participant_id}] End of video detected :)")
-            break
+    with tqdm(total=total_frames, desc=f"Frames from {participant_id}") as pbar:
+        while True:
+            if capture_idx >= total_frames:
+                log(f"[processVideo::{participant_id}] End of video detected :)")
+                break
 
-        stream.set(cv.CAP_PROP_POS_FRAMES, capture_idx)
-        ret, original_image = stream.read()
-        original_image = ARUCOColorCorrection(original_image)
-        if not ret:
-            print(f"[processVideo::{participant_id}] Can't receive frame (stream end?). Exiting ...")
-            break
-        
+            stream.set(cv.CAP_PROP_POS_FRAMES, capture_idx)
+            ret, original_image = stream.read()
+            original_image = ARUCOColorCorrection(original_image)
+            if not ret:
+                log(f"[processVideo::{participant_id}] Can't receive frame (stream end?). Exiting ...")
+                break
+            
+            state_machine_handler.step(original_image, capture_idx)
 
-        state_machine_handler.step(original_image, capture_idx)
+            if enable_visualization:
+                mosaic, log_frame = state_machine_handler.visualization(original_image=original_image, capture_idx=capture_idx, 
+                                                                        last_capture_idx=total_frames, frame_width=frame_width, 
+                                                                        frame_height=frame_height, participan_id=participant_id)
+                mouse_callback_image = mosaic
+                cv.imshow(WINDOW_STREAM_BOARD, mosaic)
+                writer.write(log_frame)
 
-        if enable_visualization:
-            mosaic, log_frame = state_machine_handler.visualization(original_image=original_image, capture_idx=capture_idx, 
-                                                                    last_capture_idx=total_frames, frame_width=frame_width, 
-                                                                    frame_height=frame_height, participan_id=participant_id)
-            mouse_callback_image = mosaic
-            cv.imshow(WINDOW_STREAM_BOARD, mosaic)
-            writer.write(log_frame)
-        else:
-            print(f"FPS: {state_machine_handler.tm.getFPS():.1f}")
+            # check keystroke to exit (image window must be on focus)
+            key = cv.pollKey()
+            if key == ord('q') or key == ord('Q') or key == 27:
+                break
+            
+            capture_increment = frame_speed_multiplier*state_machine_handler.getFrameMultiplier()
+            capture_idx+=capture_increment
 
-        # check keystroke to exit (image window must be on focus)
-        key = cv.pollKey()
-
-        # if norm_coord is not None:
-        #     key = cv.waitKey(0)
-
-        if key == ord('q') or key == ord('Q') or key == 27:
-            break
-
-        capture_idx+=frame_speed_multiplier*state_machine_handler.getFrameMultiplier()
+            pbar.set_postfix(FPS=f"{state_machine_handler.tm.getFPS():.2f}")
+            pbar.update(capture_increment)
 
     if stream.isOpened():  stream.release()
     if writer.isOpened():  writer.release()
     cv.destroyAllWindows()
 
-
-    os.makedirs(output_path, exist_ok=True)
-    state_machine_handler.log_results(output_path=output_path)
+    state_machine_handler.store_results(output_path=output_path)
     
     
-
-
 if __name__ == "__main__":
     processVideo(video_path)

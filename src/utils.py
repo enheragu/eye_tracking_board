@@ -3,6 +3,7 @@
 # encoding: utf-8
 
 import math
+from tqdm import tqdm
 
 import cv2 as cv
 import numpy as np
@@ -17,7 +18,10 @@ class bcolors:
     ENDC = '\033[0m'
     BOLD = '\033[1m'
     UNDERLINE = '\033[4m'
-    
+
+## log in terminal without affecting tqdm bar
+def log(*args, **kwargs):
+    tqdm.write(*args, **kwargs)   
 
 def projectCenter(contour):
     center = None

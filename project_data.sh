@@ -15,5 +15,5 @@ export EEHA_EYEBOARD_SCRIPT_PATH=$( cd -P "$( dirname "$SOURCE" )" >/dev/null 2>
 participants=("004" "003" "00001" "0001")
 for participant in "${participants[@]}"
 do
-    clear && cd "$EEHA_EYEBOARD_SCRIPT_PATH" && python3 process_video.py -p "$participant"
+    cd "$EEHA_EYEBOARD_SCRIPT_PATH" && python3 project_data.py -p "$participant"    
 done
