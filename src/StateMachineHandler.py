@@ -10,6 +10,7 @@ import numpy as np
 import csv
 import pickle
 import yaml
+from yaml.loader import SafeLoader
 from tabulate import tabulate
 
 from src.utils import getMosaic, bcolors
@@ -17,6 +18,9 @@ from src.utils import log
 
 def bufferStateChangeMsg(msg):
     return f"{bcolors.BOLD}{bcolors.OKCYAN}{msg}{bcolors.ENDC}\n"
+
+def logErrorMsg(msg):
+    log(f"{bcolors.BOLD}{bcolors.ERROR}{msg}{bcolors.ENDC}\n")
 
 def bufferMsg(msg):
     return f"{msg}\n"
@@ -29,7 +33,7 @@ def logStateChange(msg):
     State Machine that handles program execution
 """
 class StateMachine:
-    def __init__(self, board_handler, panel_handler, eye_data_handler, video_fps):
+    def __init__(self, board_handler, panel_handler, eye_data_handler, sequence_cfg_path, video_fps):
         # Estado init
         self.current_state = "init"
         self.video_fps = video_fps
@@ -38,7 +42,14 @@ class StateMachine:
         self.panel_handler = panel_handler
         self.eye_data_handler = eye_data_handler
 
-        self.board_metrics_store = []
+
+        with open(sequence_cfg_path) as file:
+            data = yaml.load(file, Loader=SafeLoader)
+            self.test_block_sequence = data['test_block_list']
+            self.test_block_count = 0
+            self.test_trial_count = 0
+
+        self.board_metrics_store = [[]]
         self.board_metrics_now = {}
         self.current_test_key = None
 
@@ -54,7 +65,6 @@ class StateMachine:
 
         # Speed up those part that do not need so much precision in processing
         self.frame_speed_multiplier = 1
-
 
         self.state_info = {
             "init": {'callback': self.init_state, 'frame_mult': int(self.video_fps*0.7)},
@@ -92,14 +102,16 @@ class StateMachine:
         debug_data_view = np.zeros_like(panel_view)
         debug_data = [f"Participant: {participan_id}", f'Current state: {self.current_state}']
         if self.current_test_key is not None:
-            debug_data.append(f"Current Test: search -> {self.current_test_key['color']} {self.current_test_key['shape']}")
+            debug_data.append(f"Current Test: Block: {self.test_block_count}, trial: {self.test_trial_count}")
+            debug_data.append(f"              Search -> {self.current_test_key['color']} {self.current_test_key['shape']}")
 
             if 'init_capture' in self.board_metrics_now:
                 debug_data.append(f"    - Started at {self.board_metrics_now['init_capture']} frame.")
-        elif len(self.board_metrics_store) > 0:
-            board_metrics_prev = list(self.board_metrics_store[-1].values())[0]
-            board_metrics_prev_test = list(self.board_metrics_store[-1].keys())[0]
-            debug_data.append(f"Previous Test: search -> {board_metrics_prev_test}")
+        elif len(self.board_metrics_store[-1]) > 0:
+            board_metrics_prev = list(self.board_metrics_store[-1][-1].values())[0]
+            board_metrics_prev_test = list(self.board_metrics_store[-1][-1].keys())[0]
+            debug_data.append(f"Previous Test: Block: {self.test_block_count-1}, trial: {self.test_trial_count-1}")
+            debug_data.append(f"               Search -> {board_metrics_prev_test}")
 
             if 'init_capture' in board_metrics_prev:
                 debug_data.append(f"    - Started at {board_metrics_prev['init_capture']} frame.")
@@ -164,8 +176,12 @@ class StateMachine:
         # log(f'{norm_coord = }')
         # log(f'{desnormalized_coord_list = }')
 
-        self.state_info[self.current_state]['callback'](original_image, capture_idx, self.desnormalized_coord_list)
-        self.frame_speed_multiplier = self.state_info[self.current_state]['frame_mult']
+        # Propagate this frame to next state to no to lose steps
+        previous_state = None   
+        while self.current_state != previous_state:
+            previous_state = self.current_state
+            self.state_info[self.current_state]['callback'](original_image, capture_idx, self.desnormalized_coord_list)
+            self.frame_speed_multiplier = self.state_info[self.current_state]['frame_mult']
         
         if self.norm_coord_list: self.fixation_data_store[self.current_state] += len(self.norm_coord_list)
         self.frame_data_store[self.current_state] += 1
@@ -177,12 +193,61 @@ class StateMachine:
         #     exit()
 
         self.tm.stop()
+    ## Used in case something happends and some state change is missed. If a new pannel appears
+    # status is reseted and data is stored as errored
+    def is_error_init_state(self, original_image, capture_idx, desnormalized_coord_list):
+        current_panel = self.processPanel(original_image, capture_idx, desnormalized_coord_list)
+        if current_panel is not None:
+            # Should have more data than 'end_capture' and 'init_capture'
+            if len(list(self.board_metrics_now.keys())) < 2:
+                self.board_metrics_now['transition_error'] = {'transition_error': {True: 0, False: 0}}
+            self.board_metrics_now['end_capture'] = capture_idx
+            self.board_metrics_store[-1].append({f"transition_error_{self.current_test_key['color']}_{self.current_test_key['shape']}": copy.deepcopy(self.board_metrics_now)})
+            self.board_metrics_now = {}
+            self.current_test_key = None
 
+            self.current_test_key = current_panel
+            self.current_state = "get_test_name"
+            logErrorMsg(f"[StateMachine::error_init_state] [{capture_idx}] ERROR IN TRANSITION. New panel detected. Switch to get_test_name state. Test panel detected.")
+
+            return True
+        return False
+    
     def init_state(self, original_image, capture_idx, desnormalized_coord_list):
-        
         current_panel = self.processPanel(original_image, capture_idx, desnormalized_coord_list)
         if current_panel is not None:
             self.current_test_key = current_panel
+            detected_trial = f"{self.current_test_key['color']}_{self.current_test_key['shape']}"
+
+            ## Check that is the expected configured sequence or add errored tests until current one
+            # is found in the sequence:
+            found_trial = False
+            while self.test_block_count < len(self.test_block_sequence):
+                test_block = self.test_block_sequence[self.test_block_count]
+                while self.test_trial_count < len(test_block):
+                    expected_trial = self.test_block_sequence[self.test_block_count][self.test_trial_count]
+                    if expected_trial != detected_trial:
+                        logErrorMsg(f"[StateMachine::init_state] ERROR, expected trial did not happend. {expected_trial = }; {detected_trial = }.")
+                        board_metrics_now = {'end_capture': -1, 'init_capture': -1,
+                                             'missing_trial_error': {'missing_trial_error': {True: 0, False: 0}}}
+                        self.board_metrics_store[self.test_block_count].append({f"missing_trial_error_{expected_trial}": copy.deepcopy(board_metrics_now)})
+                    else:
+                        found_trial = True
+                        break
+                    self.test_trial_count += 1
+                if found_trial:
+                    break
+                self.test_block_count += 1
+                self.board_metrics_store.append([])
+                self.test_trial_count = 0
+
+            # Increment for next search to start in the correct spot:
+            self.test_trial_count += 1
+            if self.test_trial_count > len(self.test_block_sequence[-1]):
+                self.test_block_count += 1
+                self.test_trial_count = 0
+
+
             self.current_state = "get_test_name"
             logStateChange(f"[StateMachine::init_state] [{capture_idx}] Switch to get_test_name state. Test panel detected.")
 
@@ -194,6 +259,7 @@ class StateMachine:
             logStateChange(f"[StateMachine::get_test_name] [{capture_idx}] Switch to test_start_execution. Gathering data for test {self.current_test_key['shape']} {self.current_test_key['color']}")
 
     def test_start_execution_state(self, original_image, capture_idx, desnormalized_coord_list):
+        if self.is_error_init_state(original_image, capture_idx, desnormalized_coord_list): return
         
         self.board_handler.step(original_image)
         
@@ -208,11 +274,10 @@ class StateMachine:
             self.board_contour_detected_counter = 0
             self.current_state = "test_execution"
             logStateChange(f"[StateMachine::test_start_execution] [{capture_idx}] Switch to test_execution. Gathering data for test {self.current_test_key['shape']} {self.current_test_key['color']}")
-            ## Wanna check with this current frame already
-            self.test_execution_state(original_image, capture_idx, desnormalized_coord_list)
-
+            
 
     def test_execution_state(self, original_image, capture_idx, desnormalized_coord_list):
+        if self.is_error_init_state(original_image, capture_idx, desnormalized_coord_list): return
 
         if not 'init_capture' in self.board_metrics_now:
             self.board_metrics_now['init_capture'] = capture_idx
@@ -241,13 +306,11 @@ class StateMachine:
             self.board_contour_nondetected_counter = 0
             self.current_state = "test_finish_execution"
             logStateChange(f"[StateMachine::test_execution] [{capture_idx}] Switch to test_finish_execution. Waiting fo new test to start.")
-            ## Wanna check with this current frame already
-            self.test_finish_execution_state(original_image, capture_idx, desnormalized_coord_list)
-
+            
     def test_finish_execution_state(self, original_image, capture_idx, desnormalized_coord_list):
         
         self.board_metrics_now['end_capture'] = capture_idx
-        self.board_metrics_store.append({f"{self.current_test_key['color']}_{self.current_test_key['shape']}": copy.deepcopy(self.board_metrics_now)})
+        self.board_metrics_store[-1].append({f"{self.current_test_key['color']}_{self.current_test_key['shape']}": copy.deepcopy(self.board_metrics_now)})
         self.board_metrics_now = {}
         self.current_test_key = None
 
@@ -257,7 +320,7 @@ class StateMachine:
 
     def store_results(self, output_path, participant_id = ""):
         
-        data_store = {'frames_info': self.frame_data_store, 'fixations_info': self.fixation_data_store, 'trials_data': self.board_metrics_store}
+        data_store = {'participant_id':participant_id, 'frames_info': self.frame_data_store, 'fixations_info': self.fixation_data_store, 'trials_data': self.board_metrics_store}
         with open(os.path.join(output_path,f'data_{participant_id}.pkl'), 'wb') as f:
             pickle.dump(data_store, f)
             
@@ -266,16 +329,17 @@ class StateMachine:
 
         ## CSV trials
         csv_data = []
-        csv_data.append(['trial_index','trial_name', 'Color', 'Shape', 'Slot Fixations', 'Distractor Fixations', 'trial_duration_s'])
-        for index, test_metric in enumerate(self.board_metrics_store):
-            board_metrics = list(test_metric.values())[0]
-            board_test_name = list(test_metric.keys())[0]
-            duration_s = (board_metrics['end_capture']-board_metrics['init_capture'])/self.video_fps
-            for color, color_item in board_metrics.items():
-                if color in ['init_capture', 'end_capture']:
-                    continue
-                for shape, shape_item in color_item.items():
-                    csv_data.append([index, board_test_name, color, shape, shape_item[True], shape_item[False], duration_s])
+        csv_data.append(['block_index', 'trial_index','trial_name', 'Color', 'Shape', 'Slot Fixations', 'Distractor Fixations', 'trial_duration_s'])
+        for index_block, test_block_metric in enumerate(self.board_metrics_store):
+            for index_trial, trial_metric in enumerate(test_block_metric):
+                board_metrics = list(trial_metric.values())[0]
+                board_test_name = list(trial_metric.keys())[0]
+                duration_s = (board_metrics['end_capture']-board_metrics['init_capture'])/self.video_fps
+                for color, color_item in board_metrics.items():
+                    if color in ['init_capture', 'end_capture']:
+                        continue
+                    for shape, shape_item in color_item.items():
+                        csv_data.append([index_block, index_trial, board_test_name, color, shape, shape_item[True], shape_item[False], duration_s])
             
         with open(os.path.join(output_path,f'trials_data_{participant_id}.csv'), mode="w", newline="") as file:
             csv.writer(file).writerows(csv_data)
@@ -329,46 +393,33 @@ class StateMachine:
 
 
         ## logs data of each trial
-        for index, test_metric in enumerate(self.board_metrics_store):
-            board_metrics = list(test_metric.values())[0]
-            test_tag = f"[Trial {index}] Search for {list(test_metric.keys())[0]} "
+        for index_block, test_block_metric in enumerate(self.board_metrics_store):
+            for index_trial, trial_metric in enumerate(test_block_metric):
+                board_metrics = list(trial_metric.values())[0]
+                test_tag = f"[Block {index_block}][Trial {index_trial}] Search for {list(trial_metric.keys())[0]} "
 
-            log_table_headers = ['Color', 'Shape', 'Slot Fixations', 'Distractor Fixations']
-            log_table_data = []
-            for color, color_item in board_metrics.items():
-                if color in ['init_capture', 'end_capture']:
-                    continue
-                for shape, shape_item in color_item.items():
-                    log_table_data.append([color, shape, shape_item[True], shape_item[False]])
+                log_table_headers = ['Color', 'Shape', 'Slot Fixations', 'Distractor Fixations']
+                log_table_data = []
+                for color, color_item in board_metrics.items():
+                    if color in ['init_capture', 'end_capture']:
+                        continue
+                    for shape, shape_item in color_item.items():
+                        log_table_data.append([color, shape, shape_item[True], shape_item[False]])
 
-            formatted_table = tabulate(log_table_data, headers=log_table_headers, tablefmt="pretty")
-            
-            table_width = len(formatted_table.splitlines()[1]) # Get length from dashes, which is second one
-            title_dashes = '-' * ((table_width - len(test_tag)) // 2)
+                formatted_table = tabulate(log_table_data, headers=log_table_headers, tablefmt="pretty")
+                
+                table_width = len(formatted_table.splitlines()[1]) # Get length from dashes, which is second one
+                title_dashes = '-' * ((table_width - len(test_tag)) // 2)
 
-            duration_s = (board_metrics['end_capture']-board_metrics['init_capture'])/self.video_fps
-            terminal_log += bufferStateChangeMsg(f"{title_dashes}{test_tag}{title_dashes}")
-            terminal_log += bufferMsg(f"    - Started at {board_metrics['init_capture']} frame.")
-            terminal_log += bufferMsg(f"    - Ended at {board_metrics['end_capture']} frame.")
-            terminal_log += bufferMsg(f"    - Took {board_metrics['end_capture']-board_metrics['init_capture']} frames. ({duration_s} s)")
-            for line in formatted_table.splitlines():
-                terminal_log += bufferMsg(line)
-            terminal_log += bufferMsg("\n\n")
+                duration_s = (board_metrics['end_capture']-board_metrics['init_capture'])/self.video_fps
+                terminal_log += bufferStateChangeMsg(f"{title_dashes}{test_tag}{title_dashes}")
+                terminal_log += bufferMsg(f"    - Started at {board_metrics['init_capture']} frame.")
+                terminal_log += bufferMsg(f"    - Ended at {board_metrics['end_capture']} frame.")
+                terminal_log += bufferMsg(f"    - Took {board_metrics['end_capture']-board_metrics['init_capture']} frames. ({duration_s} s)")
+                for line in formatted_table.splitlines():
+                    terminal_log += bufferMsg(line)
+                terminal_log += bufferMsg("\n\n")
 
 
         log(terminal_log)
         return terminal_log
-        
-
-        for color, shapes_dict in self.board_metrics_store.items():
-            time_color = 0
-            for shape, slot_dict in shapes_dict.items():
-                for slot, num in slot_dict.items():
-                    num = float(num)/float(video_fps)
-                    time_color += num
-
-            log(f'------------------------------')
-            log(f'Color: {color}: {time_color}s')
-            for shape, slot_dict in shapes_dict.items():
-                for slot, num in slot_dict.items():
-                    log(f'Shape: {shape} ({slot}): {num}s')

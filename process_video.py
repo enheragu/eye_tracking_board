@@ -53,6 +53,7 @@ os.makedirs(output_path, exist_ok=True)
 
 game_configuration= os.path.join(CURRENT_FILE_PATH,'cfg/game_config.yaml')
 game_aruco_board_cfg= os.path.join(CURRENT_FILE_PATH,'cfg/game_aruco_board.yaml')
+trial_blocks_cfg= os.path.join(CURRENT_FILE_PATH,'cfg/trials_config.yaml')
 samples_configuration= os.path.join(CURRENT_FILE_PATH,'cfg/sample_shape_cfg')
 eye_data_topic = 'gaze' #'fixations'
 frame_speed_multiplier = 1 # process one frame each N to go faster
@@ -190,7 +191,7 @@ def processVideo(video_path):
     
     eye_data_handler = EyeDataHandler(root_path=participant_path, data_path=data_path, video_fps=fps, topic_data=eye_data_topic)
 
-    state_machine_handler = StateMachine(board_handler,panel_handler,eye_data_handler, video_fps=fps)
+    state_machine_handler = StateMachine(board_handler,panel_handler,eye_data_handler, sequence_cfg_path = trial_blocks_cfg, video_fps=fps)
     
     capture_idx = init_capture_idx
     stream.set(cv.CAP_PROP_POS_FRAMES, capture_idx)
