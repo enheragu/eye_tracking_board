@@ -12,8 +12,8 @@ export EEHA_EYEBOARD_SCRIPTFILE_PATH=$SOURCE
 export EEHA_EYEBOARD_SCRIPT_PATH=$( cd -P "$( dirname "$SOURCE" )" >/dev/null 2>&1 && pwd )
 
 
-participants=("00001" "0001") #"004" "003" 
+participants=("000") #"004" "003" 
 for participant in "${participants[@]}"
 do
-    clear && cd "$EEHA_EYEBOARD_SCRIPT_PATH" && python3 process_video.py -p "$participant"
+    clear && cd "$EEHA_EYEBOARD_SCRIPT_PATH" && python3 process_video.py -p "$participant" -t 'fixations' -o
 done

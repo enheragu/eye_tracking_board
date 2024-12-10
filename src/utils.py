@@ -23,6 +23,44 @@ class bcolors:
 def log(*args, **kwargs):
     tqdm.write(*args, **kwargs)   
 
+from types import MappingProxyType
+def print_tuple(tupla, indent=0):
+    if all(isinstance(item, float) for item in tupla):
+        log(f"({type(tupla).__name__}) - {tupla}")
+        return
+
+    log("")
+    for index, item in enumerate(tupla):
+        log(f"{'    ' * indent}· [{index}]: ", end="")
+        
+        if isinstance(item, dict) or isinstance(item, MappingProxyType):
+            log("(dict)" if isinstance(item, dict) else "(mappingproxy)")
+            nested_dict = dict(item) if isinstance(item, MappingProxyType) else item
+            print_dict(nested_dict, indent + 1)
+        elif isinstance(item, (list, tuple)):
+            log(f"({type(item).__name__})")
+            print_tuple(item, indent + 1)
+        else:
+            log(f"({type(item).__name__}) - {item}")
+
+def print_named_dict(name, dictionary):
+    log(f"{name}:")
+    print_dict(dictionary, indent=1)
+
+def print_dict(dictionary, indent=0):
+    for key, value in dictionary.items():
+        log(f"{'    '*indent}· {key}: ", end="")
+
+        if isinstance(value, dict) or isinstance(value, MappingProxyType):
+            log("(dict)" if isinstance(value, dict) else "(mappingproxy)")
+            nested_dict = dict(value) if isinstance(value, MappingProxyType) else value
+            print_dict(nested_dict, indent + 1)
+        elif isinstance(value, (list, tuple)):
+            print_tuple(value, indent + 1)
+        else:
+            log(f"({type(value).__name__}) - {value}")
+
+
 def projectCenter(contour):
     center = None
     M = cv.moments(contour)

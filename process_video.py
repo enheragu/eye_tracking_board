@@ -35,16 +35,20 @@ colors_dict = {'red':    {'h': 350, 'eps': 29},
 colors_list = {'red': (0,0,255), 'green': (0,255,0), 'blue': (255,0,0), 'yellow': (0,255,255), 'board': (255,255,0)}
 
 participant_id = '00001'
+eye_data_topic = 'fixations' #'gaze'
 
 parser = argparse.ArgumentParser(description='Process PupilLabs data with board')
 parser.add_argument('-p', dest='participant', type=str, default=participant_id, metavar='id', help='Participant folder id')
+parser.add_argument('-t', dest='topic', type=str, default=eye_data_topic, metavar='id', help='Participant folder id')
+parser.add_argument('-o', '--use_offline_data', action='store_true', default=False, help='Makes use of offline data instead of online data. Note that offline data includes fixations but not gaze data.')
 participant_id = parser.parse_args().participant
+eye_data_topic = parser.parse_args().topic
 
 WINDOW_STREAM_CAMERA = f'Camera View {participant_id}'
 WINDOW_STREAM_BOARD = f'Board View {participant_id}'
 
 participant_path = os.path.join(CURRENT_FILE_PATH,f'data/{participant_id}')
-data_path = participant_path #os.path.join(participant_path,'exports', '000')
+data_path = participant_path if not parser.parse_args().use_offline_data else os.path.join(participant_path,'offline_data')
 video_path = os.path.join(participant_path,'world.mp4')
 
 log(f"Script root folder: {CURRENT_FILE_PATH}")
@@ -55,7 +59,6 @@ game_configuration= os.path.join(CURRENT_FILE_PATH,'cfg/game_config.yaml')
 game_aruco_board_cfg= os.path.join(CURRENT_FILE_PATH,'cfg/game_aruco_board.yaml')
 trial_blocks_cfg= os.path.join(CURRENT_FILE_PATH,'cfg/trials_config.yaml')
 samples_configuration= os.path.join(CURRENT_FILE_PATH,'cfg/sample_shape_cfg')
-eye_data_topic = 'gaze' #'fixations'
 frame_speed_multiplier = 1 # process one frame each N to go faster
 
 init_capture_idx = 0 #4300 #18700
@@ -196,7 +199,7 @@ def processVideo(video_path):
     capture_idx = init_capture_idx
     stream.set(cv.CAP_PROP_POS_FRAMES, capture_idx)
 
-    with tqdm(total=total_frames, desc=f"Frames from {participant_id}") as pbar:
+    with tqdm(total=total_frames, desc=f"Frames from {participant_id}", initial=capture_idx) as pbar:
         while True:
             if capture_idx >= total_frames:
                 log(f"[processVideo::{participant_id}] End of video detected :)")

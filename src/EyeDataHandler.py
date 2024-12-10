@@ -11,7 +11,7 @@ import pandas as pd
 import pickle  
 
 from src.deps.file_methods import load_pldata_file
-from src.utils import log
+from src.utils import log, print_named_dict
 
 GAZE_CONFIDENCE_THRESHOLD = 0.6
 
@@ -50,8 +50,8 @@ class EyeDataHandlerPLDATA:
 
         log(f"[EyeDataHandlerPLDATA(::__init__] Process all {topic_data} topic data to match world timestamps, fixations data from:")
         log(f"\t\t· {world_timestamps_path}")
-        log(f"\t\t· {data_path}.pldata")
-        log(f"\t\t· {data_path}_timestamps.npy")
+        log(f"\t\t· {data_path}/{topic_data}.pldata")
+        log(f"\t\t· {data_path}/{topic_data}_timestamps.npy")
 
 
         self.video_fps = video_fps
@@ -67,7 +67,8 @@ class EyeDataHandlerPLDATA:
                 self.data.append({'norm_pos': dict_obj['norm_pos'],
                                 'timestamp': current_timestamp,
                                 'duration': duration})
-                                
+
+        # print_named_dict('[EyeDataHandlerPLDATA(::__init__] dict_obj', dict_obj)
         self.data.sort(key=lambda x: x['timestamp'])
         self.world_timestamps = sorted(self.world_timestamps)
         log(f"[EyeDataHandlerPLDATA(::__init__] Total number of {topic_data}: {len(self.data)}")

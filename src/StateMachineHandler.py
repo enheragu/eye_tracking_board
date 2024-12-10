@@ -396,7 +396,7 @@ class StateMachine:
         for index_block, test_block_metric in enumerate(self.board_metrics_store):
             for index_trial, trial_metric in enumerate(test_block_metric):
                 board_metrics = list(trial_metric.values())[0]
-                test_tag = f"[Block {index_block}][Trial {index_trial}] Search for {list(trial_metric.keys())[0]} "
+                test_tag = f"[Block {index_block}][Trial {index_trial}] Search for {list(trial_metric.keys())[0]}"
 
                 log_table_headers = ['Color', 'Shape', 'Slot Fixations', 'Distractor Fixations']
                 log_table_data = []
@@ -412,7 +412,7 @@ class StateMachine:
                 title_dashes = '-' * ((table_width - len(test_tag)) // 2)
 
                 duration_s = (board_metrics['end_capture']-board_metrics['init_capture'])/self.video_fps
-                terminal_log += bufferStateChangeMsg(f"{title_dashes}{test_tag}{title_dashes}")
+                terminal_log += bufferStateChangeMsg(f"{title_dashes} {test_tag} {title_dashes}")
                 terminal_log += bufferMsg(f"    - Started at {board_metrics['init_capture']} frame.")
                 terminal_log += bufferMsg(f"    - Ended at {board_metrics['end_capture']} frame.")
                 terminal_log += bufferMsg(f"    - Took {board_metrics['end_capture']-board_metrics['init_capture']} frames. ({duration_s} s)")

@@ -1,21 +1,24 @@
 
 # Mantain consistency of units!!
 # Both board data is related to the reconstructed area that is to be requested :)
-board_position: [48,51,0]  # upper left corner (same units) (asume Z is constant in all board)
+board_position: [4.5,4.5,0]  # upper left corner (same units) (asume Z is constant in all board)
 # board_position: [0,0,1]
-board_size: [324,220]    # x,y size of the board
+board_size: [38.8,25]    # x,y size of the board
 
 # Side size of the Aruco marker
-aruco_side: 40
+aruco_side: 4 # cm
 
 # Configuration of each marker with its associated shape
 # Aruco position in the sheet from upper left corner (same units)
 # Asumes that z is constant in same aruco
 marker_configuration:
-  - {id: 510, position: [4.7,243.2,0]}
-  - {id: 544, position: [4.7,125,0]}
-  - {id: 561, position: [4.7,5.7,0]}
-  - {id: 578, position: [190,5.7,0]}
-  - {id: 612, position: [375.3,5.7,0]}
-  - {id: 646, position: [375.3,125,0]}
-  - {id: 663, position: [375.3,243.2,0]}
+  - {id: 510, position: [0.25,29.75,0]} # All in cm
+  - {id: 544, position: [0.25,15,0]}
+  - {id: 561, position: [0.25,0.25,0]}
+  - {id: 748, position: [15.05,0.25,0]}
+  - {id: 714, position: [28.85,0.25,0]}
+  - {id: 612, position: [43.55,0.25,0]}
+  - {id: 646, position: [43.55,15,0]}
+  - {id: 663, position: [43.55,29.75,0]}
+  - {id: 680, position: [28.85,29.75,0]}
+  - {id: 578, position: [15.05,29.75,0]}
