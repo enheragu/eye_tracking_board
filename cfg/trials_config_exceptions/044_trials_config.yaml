@@ -1,0 +1,9 @@
+
+## All 6 blocks of trials
+test_block_list: 
+#  - [0, [[0, "yellow_circle"],  [1, "red_hexagon"],     [2, "green_triangle"], [3, "blue_circle"],    [4, "red_triangle"],   [5, "yellow_hexagon"],  [6, "blue_triangle"],  [7, "green_hexagon"],  [8, "yellow_triangle"], [9, "red_circle"]]]
+ - [1, [[0, "red_hexagon"],    [1, "yellow_triangle"], [2, "blue_circle"],    [3, "green_triangle"], [4, "yellow_circle"],  [5, "blue_triangle"],   [6, "red_circle"],     [7, "yellow_hexagon"], [8, "red_triangle"],    [9, "green_hexagon"]]]
+ - [2, [[0, "red_circle"],     [1, "yellow_triangle"], [2, "green_hexagon"],  [3, "blue_triangle"],  [4, "yellow_hexagon"], [5, "red_triangle"],    [6, "blue_circle"],    [7, "green_triangle"], [8, "red_hexagon"],     [9, "yellow_circle"]]]
+ - [3, [[0, "yellow_hexagon"], [1, "red_triangle"],    [2, "yellow_circle"],  [3, "blue_triangle"],  [4, "red_hexagon"],    [5, "green_triangle"],  [6, "blue_circle"],    [7, "green_hexagon"],  [8, "yellow_triangle"], [9, "red_circle"]]]
+ - [4, [[0, "red_circle"],     [1, "blue_triangle"],   [2, "yellow_circle"],  [3, "green_triangle"], [4, "red_hexagon"],    [5, "yellow_triangle"], [6, "blue_circle"],    [7, "green_hexagon"],  [8, "red_triangle"],    [9, "yellow_hexagon"]]]
+ - [5, [[0, "green_hexagon"],  [1, "red_triangle"],    [2, "yellow_hexagon"], [3, "red_circle"],     [4, "blue_triangle"],  [5, "yellow_circle"],   [6, "green_triangle"], [7, "blue_circle"],    [8, "yellow_triangle"], [9, "red_hexagon"]]]

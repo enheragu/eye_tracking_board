@@ -12,4 +12,4 @@ aruco_side: 28.7
 # Asumes that z is constant in same aruco
 marker_configuration:
   - {id: 306, position: [29.5,90,0]}
-  - {id: 340, position: [239.5,90,0]}
+  # - {id: 340, position: [239.5,90,0]}

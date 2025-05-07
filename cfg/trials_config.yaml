@@ -1,9 +1,0 @@
-
-## All 6 blocks of trials
-test_block_list: 
- - ["yellow_circle", "red_hexagon", "green_triangle", "blue_circle", "red_triangle", "yellow_hexagon", "blue_triangle", "green_hexagon", "yellow_triangle", "red_circle"]
- - ["red_hexagon", "yellow_triangle", "blue_circle", "green_triangle", "yellow_circle", "blue_triangle", "red_circle", "yellow_hexagon", "red_triangle", "green_hexagon"]
- - ["red_circle", "yellow_triangle", "green_hexagon", "blue_triangle", "yellow_hexagon", "red_triangle", "blue_circle", "green_triangle", "red_hexagon", "yellow_circle"]
- - ["yellow_hexagon", "red_triangle", "yellow_circle", "blue_triangle", "red_hexagon", "green_triangle", "blue_circle", "green_hexagon", "yellow_triangle", "red_circle"]
- - ["red_circle", "blue_triangle", "yellow_circle", "green_triangle", "red_hexagon", "yellow_triangle", "blue_circle", "green_hexagon", "red_triangle", "yellow_hexagon"]
- - ["green_hexagon", "red_triangle", "yellow_hexagon", "red_circle", "blue_triangle", "yellow_circle", "green_triangle", "blue_circle", "yellow_triangle", "red_hexagon"]
