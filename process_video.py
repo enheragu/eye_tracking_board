@@ -21,7 +21,7 @@ from src.PanelHandler import PanelHandler
 # from src.EyeDataHandler import EyeDataHandlerCSV as EyeDataHandler
 from src.EyeDataHandler import EyeDataHandlerPLDATA as EyeDataHandler
 from src.ArucoBoardHandler import ARUCOColorCorrection
-from src.StateMachineHandler import StateMachine
+from src.StateMachineHandler import StateMachine, ExceptionNoMoreBlocks
 
 
 CURRENT_FILE_PATH = os.path.dirname(os.path.abspath(__file__))
@@ -41,8 +41,11 @@ parser = argparse.ArgumentParser(description='Process PupilLabs data with board'
 parser.add_argument('-p', dest='participant', type=str, default=participant_id, metavar='id', help='Participant folder id')
 parser.add_argument('-t', dest='topic', type=str, default=eye_data_topic, metavar='id', help='Participant folder id')
 parser.add_argument('-o', '--use_offline_data', action='store_true', default=False, help='Makes use of offline data instead of online data. Note that offline data includes fixations but not gaze data.')
+parser.add_argument('-v', '--visualization', action='store_true', default=False, help='Enable visualization for process.')
+parser.add_argument('-s', '--slow_analysis', action='store_true', default=False, help='Enable slow analysis for a better transition detection.')
 participant_id = parser.parse_args().participant
 eye_data_topic = parser.parse_args().topic
+slow_analysis = parser.parse_args().slow_analysis
 
 WINDOW_STREAM_CAMERA = f'Camera View {participant_id}'
 WINDOW_STREAM_BOARD = f'Board View {participant_id}'
@@ -51,23 +54,24 @@ participant_path = os.path.join(CURRENT_FILE_PATH,f'data/{participant_id}')
 data_path = participant_path if not parser.parse_args().use_offline_data else os.path.join(participant_path,'offline_data')
 video_path = os.path.join(participant_path,'world.mp4')
 
-log(f"Script root folder: {CURRENT_FILE_PATH}")
-output_path = os.path.join(CURRENT_FILE_PATH,f'output/{participant_id}/')
+log(f"[processVideo::{participant_id}] Script root folder: {CURRENT_FILE_PATH}")
+output_path = os.path.join(CURRENT_FILE_PATH,f'output/{eye_data_topic}/{participant_id}/')
 os.makedirs(output_path, exist_ok=True)
 
 game_configuration= os.path.join(CURRENT_FILE_PATH,'cfg/game_config.yaml')
 game_aruco_board_cfg= os.path.join(CURRENT_FILE_PATH,'cfg/game_aruco_board.yaml')
-trial_blocks_cfg= os.path.join(CURRENT_FILE_PATH,'cfg/trials_config.yaml')
+trial_blocks_cfg= os.path.join(CURRENT_FILE_PATH,f'cfg/trials_config_exceptions/{participant_id}_trials_config.yaml')
+default_trial_blocks_cfg= os.path.join(CURRENT_FILE_PATH,f'cfg/default_trials_config.yaml')
+if not os.path.exists(trial_blocks_cfg):
+    log(f"[processVideo::{participant_id}] Using default file for trials configuration: {trial_blocks_cfg}.")
+    trial_blocks_cfg = default_trial_blocks_cfg
+else:
+    log(f"[processVideo::{participant_id}] Using trials configuration from exception file: {trial_blocks_cfg}.")
+
 samples_configuration= os.path.join(CURRENT_FILE_PATH,'cfg/sample_shape_cfg')
 frame_speed_multiplier = 1 # process one frame each N to go faster
-
-init_capture_idx = 0 #4300 #18700
-
-enable_visualization = True
-
-
-# cv.namedWindow(WINDOW_STREAM_CAMERA, cv.WINDOW_AUTOSIZE)
-cv.namedWindow(WINDOW_STREAM_BOARD, cv.WINDOW_AUTOSIZE)
+init_capture_idx = 0
+enable_visualization = parser.parse_args().visualization
 
 mouse_callback_image = None
 def mouse_callback(event, x, y, flags, param):
@@ -80,15 +84,16 @@ def mouse_callback(event, x, y, flags, param):
     if event == cv.EVENT_LBUTTONDOWN and mouse_callback_image is None:
         log(f'No image provided to detect HSV components.')
 
-# cv.setMouseCallback(WINDOW_STREAM_CAMERA, mouse_callback)
-cv.setMouseCallback(WINDOW_STREAM_BOARD, mouse_callback)
-
+if enable_visualization:
+    # cv.namedWindow(WINDOW_STREAM_CAMERA, cv.WINDOW_AUTOSIZE)
+    cv.namedWindow(WINDOW_STREAM_BOARD, cv.WINDOW_AUTOSIZE)
+    # cv.setMouseCallback(WINDOW_STREAM_CAMERA, mouse_callback)
+    cv.setMouseCallback(WINDOW_STREAM_BOARD, mouse_callback)
 
 
 
 # Contours detected in image and data dict of the board
 def checkBoardMatch(contours, data_dict, board_size):
-
     coordinates = {}
     center_list = []
     coordinates_idx = {}
@@ -161,13 +166,12 @@ def checkBoardMatch(contours, data_dict, board_size):
 
 
 
-
 def processVideo(video_path):
     global init_capture_idx, mouse_callback_image
 
     stream = cv.VideoCapture(video_path)
     if not stream.isOpened():
-        log(f"Could not open video {video_path}")
+        log(f"[processVideo::{participant_id}] Could not open video {video_path}")
         exit()
 
     total_frames = int(stream.get(cv.CAP_PROP_FRAME_COUNT))
@@ -180,7 +184,9 @@ def processVideo(video_path):
     frame_height = int(stream.get(cv.CAP_PROP_FRAME_HEIGHT))
     log(f"[processVideo::{participant_id}] Processing video of {fps} FPS and {frame_width = }; {frame_height = }")
     log(f"[processVideo::{participant_id}] Processing video duration {total_frames/fps} seconds")
-    writer = cv.VideoWriter(os.path.join(output_path,f'debug_{participant_id}.mp4'), cv.VideoWriter_fourcc(*'mp4v'), int(fps/frame_speed_multiplier), (frame_width*3, frame_height*2))
+    
+    if enable_visualization:
+        writer = cv.VideoWriter(os.path.join(output_path,f'debug_{participant_id}.mp4'), cv.VideoWriter_fourcc(*'mp4v'), int(fps/frame_speed_multiplier), (frame_width*3, frame_height*2))
 
     distortion_handler = DistortionHandler(calibration_json_path='camera_calib.json', 
                                            frame_width=frame_width, frame_height=frame_height)
@@ -194,7 +200,7 @@ def processVideo(video_path):
     
     eye_data_handler = EyeDataHandler(root_path=participant_path, data_path=data_path, video_fps=fps, topic_data=eye_data_topic)
 
-    state_machine_handler = StateMachine(board_handler,panel_handler,eye_data_handler, sequence_cfg_path = trial_blocks_cfg, video_fps=fps)
+    state_machine_handler = StateMachine(board_handler,panel_handler,eye_data_handler, sequence_cfg_path = trial_blocks_cfg, video_fps=fps, slow_analysis=slow_analysis)
     
     capture_idx = init_capture_idx
     stream.set(cv.CAP_PROP_POS_FRAMES, capture_idx)
@@ -211,8 +217,11 @@ def processVideo(video_path):
             if not ret:
                 log(f"[processVideo::{participant_id}] Can't receive frame (stream end?). Exiting ...")
                 break
-            
-            state_machine_handler.step(original_image, capture_idx)
+            try:
+                state_machine_handler.step(original_image, capture_idx)
+            except ExceptionNoMoreBlocks as e:
+                print(f"End of execution")
+                break
 
             if enable_visualization:
                 mosaic, log_frame = state_machine_handler.visualization(original_image=original_image, capture_idx=capture_idx, 
@@ -234,10 +243,10 @@ def processVideo(video_path):
             pbar.update(capture_increment)
 
     if stream.isOpened():  stream.release()
-    if writer.isOpened():  writer.release()
+    if enable_visualization and writer.isOpened():  writer.release()
     cv.destroyAllWindows()
 
-    state_machine_handler.store_results(output_path=output_path, participant_id=participant_id)
+    state_machine_handler.store_results(output_path=output_path, participant_id=participant_id, video_fps=fps)
     
     
 if __name__ == "__main__":

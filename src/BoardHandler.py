@@ -10,7 +10,7 @@ import numpy as np
 import yaml
 from yaml.loader import SafeLoader
 
-from src.ArucoBoardHandler import ArucoBoardHandler, aruco_board_transform
+from src.ArucoBoardHandler import ArucoBoardHandler, detectAllArucos
 
 from src.utils import interpolate_points, getMaskHue, log
 from src.detect_shapes import checkShape
@@ -83,7 +83,8 @@ class BoardHandler:
         
     def step(self, image):
         undistorted_image = self.distortion_handler.undistortImage(image)
-        self.board_view = self.computeApplyHomography(undistorted_image)
+        corners, ids = detectAllArucos(undistorted_image)
+        self.board_view = self.computeApplyHomography(undistorted_image, corners, ids)
         self.board_contour = self.detectContour(self.board_view)
 
         if self.board_contour is None:
@@ -162,7 +163,7 @@ class BoardHandler:
             board_data_dict=self.board_data_dict,
             fixation_coord_list=self.fixation_coord_list)
 
-    def getDistortedOriginalVisualization(self, undistorted_image):
+    def getDistortedOriginalVisualization(self, undistorted_image, corners, ids):
         display_cfg_board_view = undistorted_image
         display_detected_board_view = undistorted_image
         if self.board_contour is not None:
@@ -194,18 +195,26 @@ class BoardHandler:
 
             display_cfg_board_view, display_detected_board_view = self.handleVisualization(undistorted_image, undistorted_board_contour, self.board_size, undistorted_cell_matrix, undistorted_cell_contours, self.board_data_dict, undistorted_fixation_coord_list)
 
-            if self.display_arucos:
-                aruco_list, _ =self.aruco_board_handler.detectArucos(undistorted_image)
-                for aruco_data in aruco_list:
-                    aruco_id = np.array([[aruco_data['id']]], dtype=np.int32)
-                    aruco_corners = aruco_data['points_image'].reshape((1, 4, 2))                    
-                    # cv.aruco.drawDetectedMarkers(image=display_cfg_board_view, corners=[aruco_corners], ids=aruco_id, borderColor=(0,0,255))
-                    cv.aruco.drawDetectedMarkers(image=display_detected_board_view, corners=[aruco_corners], ids=aruco_id, borderColor=(0,0,255))
+        if self.display_arucos:
+            aruco_list, _, extra_aruco = self.aruco_board_handler.processArucos(corners, ids)
+
+            for aruco_data in extra_aruco:
+                aruco_id = np.array([[aruco_data['id']]], dtype=np.int32)
+                aruco_corners = aruco_data['points_image'].reshape((1, 4, 2))                    
+                cv.aruco.drawDetectedMarkers(image=display_cfg_board_view, corners=[aruco_corners], ids=aruco_id, borderColor=(255,255,0))
+                cv.aruco.drawDetectedMarkers(image=display_detected_board_view, corners=[aruco_corners], ids=aruco_id, borderColor=(255,255,0))
+                
+            for aruco_data in aruco_list:
+                aruco_id = np.array([[aruco_data['id']]], dtype=np.int32)
+                aruco_corners = aruco_data['points_image'].reshape((1, 4, 2))                    
+                cv.aruco.drawDetectedMarkers(image=display_cfg_board_view, corners=[aruco_corners], ids=aruco_id, borderColor=(0,0,255))
+                cv.aruco.drawDetectedMarkers(image=display_detected_board_view, corners=[aruco_corners], ids=aruco_id, borderColor=(0,0,255))
+            
 
         # If cannot plot any data...
         return display_cfg_board_view, display_detected_board_view
 
-    def computeApplyHomography(self, undistorted_image):
+    def computeApplyHomography(self, undistorted_image, corners, ids):
         ## Version detecting contour of black edges of the game
         display_image = undistorted_image
         # board_contour = self.detectContour(undistorted_image)
@@ -218,7 +227,7 @@ class BoardHandler:
             #                         board_3d_contours=self.margin_points_3d,
             #                         img_shape=undistorted_image.shape)
 
-        self.homography, self.warp_width, self.warp_height, rotated = self.aruco_board_handler.getTransform(undistorted_image)
+        self.homography, self.warp_width, self.warp_height, rotated = self.aruco_board_handler.getTransform(undistorted_image, corners, ids)
         self.board_data_dict = self.board_data_dict_rotated if rotated else self.board_data_dict_upright 
 
         # display_image = np.zeros((self.warp_width, self.warp_height, 3), dtype=undistorted_image.dtype)
@@ -254,12 +263,34 @@ class BoardHandler:
                     board_coord = idx
 
                     log(f"\t\t· Fixation detected in: {self.board_data_dict[idx]} in {board_coord}.")
-                    coord_info_list.append((color, shape, slot, board_coord))
+                    coord_info_list.append((color, shape, slot, board_coord, corrected_coord))
                 else:
                     log(f"\t\t· Fixation not detected, coordinates not detected in board: {corrected_coord}.")
-                    coord_info_list.append(('not_board', 'not_board', False, [-1,-1]))
+                    coord_info_list.append(('not_board', 'not_board', False, [-1,-1], corrected_coord))
                 
         return coord_info_list
+
+    def getShapeCellIndex(self, shape, color, piece=True):
+        # print(f"Get Cell Index for {shape = }, {color = }, {piece = }")
+        if self.cell_matrix is None:
+            return None, None
+        for i in range(self.cell_matrix.shape[0]):
+            for j in range(self.cell_matrix.shape[1]):
+                if (str(self.board_data_dict[(j,i)][0]) == str(color) and
+                    str(self.board_data_dict[(j,i)][1]) == str(shape) and
+                    bool(self.board_data_dict[(j,i)][2]) == bool(piece)):
+                    return [i,j]
+        return None, None
+    
+    def getShapeCoord(self, shape, color, piece=True):
+        # print(f"Get Cell Coord for {shape = }, {color = }, {piece = }")
+        cell_index = self.getShapeCellIndex(shape, color, piece)
+        if cell_index[0] is not None:
+            coord = self.cell_matrix[cell_index[0]][cell_index[1]]
+            return coord
+        else:
+            return None, None
+        
 
     ## FUNCTIONS BASED ON CONFIGURATION
     def parseCFGBoardData(self,game_configuration):
@@ -315,8 +346,29 @@ class BoardHandler:
 
         return cell_matrix, cell_width, cell_height
     
+    def getPixelBoardNorm(self, pixel_coord):
+        x, y = pixel_coord[0]
+
+        if x is None or y is None:
+            return np.array([None, None])
+
+        x_board_origin = self.cell_matrix[0][0][0] - self.cell_width / 2
+        y_board_origin = self.cell_matrix[0][0][1] - self.cell_height / 2
+
+        relative_x = x - x_board_origin
+        relative_y = y - y_board_origin
+
+        norm_x = relative_x/self.warp_width
+        norm_y = relative_y/self.warp_height
+
+        return np.array([norm_x, norm_y])
+
+        
     def getCellIndex(self, pixel_coord):
         x, y = pixel_coord[0]
+        
+        if x is None or y is None:
+            return None, None
         
         x_board_origin = self.cell_matrix[0][0][0] - self.cell_width / 2
         y_board_origin = self.cell_matrix[0][0][1] - self.cell_height / 2
@@ -359,7 +411,7 @@ class BoardHandler:
         # Image is already compensated, get color infomration from board margins in the image
         # instead of harcoding them:
         height, width, _ = image.shape
-        pixel_distance = 15
+        pixel_distance = 13
         reference_edges = np.concatenate([
             hsv_image[pixel_distance:height-pixel_distance, pixel_distance],  # Left edge
             hsv_image[pixel_distance:height-pixel_distance, width-pixel_distance],  # Right edge

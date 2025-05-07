@@ -32,27 +32,29 @@ class PanelHandler:
         self.homography = None
 
         self.panel_handler_list = self.parseCFGPanelData(panel_configuration_path)
-
+        
+        for panel_handler in self.panel_handler_list:
+            print(f"[PanelHandler] {panel_handler = }")
 
     def getCurrentPanel(self):
         return self.last_detected
     
-    def step(self, image):
+    def step(self, image, corners, ids):
         undistorted_image = self.distortion_handler.undistortImage(image)
         
-        self.panel_view = self.computeApplyHomography(undistorted_image)
+        self.panel_view = self.computeApplyHomography(undistorted_image, corners, ids)
         # Detects contour of the figure, not doint that for now
         # self.shape_contour = self.detectContour(self.panel_view)
         # self.panel_view = undistorted_image
 
-    def computeApplyHomography(self, undistorted_image):
+    def computeApplyHomography(self, undistorted_image, corners, ids):
         
         self.last_detected = None
         for aruco_handler in self.panel_handler_list:
-            homography, self.warp_width, self.warp_height, rotated = aruco_handler.getTransform(undistorted_image)
+            homography, self.warp_width, self.warp_height, rotated = aruco_handler.getTransform(undistorted_image, corners, ids)
             if homography is not None:
                 self.homography = homography
-                self.last_detected = {'color': aruco_handler.color, 'shape': aruco_handler.shape}
+                self.last_detected = {'color': aruco_handler.color, 'shape': aruco_handler.shape, 'arucos': aruco_handler.arucos_detected}
                 break
 
         display_image = np.zeros((self.warp_width, self.warp_height, 3), dtype=undistorted_image.dtype)
@@ -78,20 +80,20 @@ class PanelHandler:
         return panel_handler_list
             
 
-    def handleVisualization(self, image, shape_contour):
+    def handleVisualization(self, image, shape_contour, corners, ids):
         display_cfg_panel_view = image.copy()
 
         for panel_handler in self.panel_handler_list:
-            ret = panel_handler.handleVisualization(display_cfg_panel_view)
+            ret = panel_handler.handleVisualization(display_cfg_panel_view, corners, ids)
             if ret:
                 color = self.colors_list[panel_handler.color]
                 cv.drawContours(display_cfg_panel_view, [shape_contour], -1, color=color, thickness=2)
         
         return display_cfg_panel_view
 
-    def getVisualization(self):
+    def getVisualization(self, corners, ids):
         if self.last_detected is not None:
-            return self.handleVisualization(self.panel_view, self.shape_contour)
+            return self.handleVisualization(self.panel_view, self.shape_contour, corners, ids)
 
         return self.panel_view
     
