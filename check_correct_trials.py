@@ -21,7 +21,8 @@ ORANGE = "\033[9202m"
 RESET = "\033[0m"
 
 mising_trial_tag = "missing_trial_error_" 
-trainsition_error_tag = "transition_error_"
+no_end_tag = "transition_error_no_end_"
+no_init_tag = "transition_error_no_init_"
 def get_participant_trials(participant_dir, participant_id):
     """Lee el archivo YAML de un participante y devuelve los trials presentes."""
     yaml_file = os.path.join(participant_dir, yaml_file_name.format(participant_id))
@@ -71,13 +72,22 @@ def generate_presence_table(participants_data):
                         test_ok +=1
                     elif mising_trial_tag in current_trial_name and current_trial_name.replace(mising_trial_tag, "") == trial_name:
                         row.append(RED+"Miss"+RESET) #("✅")
-                    elif trainsition_error_tag in current_trial_name and current_trial_name.replace(trainsition_error_tag, "") == trial_name:
+                    elif no_end_tag in current_trial_name and current_trial_name.replace(no_end_tag, "") == trial_name:
                         row.append(RED+"No-end"+RESET) #("✅")
                         if not participant_id in no_end_timestampts:
                             no_end_timestampts[participant_id] = {}
                         if not block_id in no_end_timestampts[participant_id]:
                             no_end_timestampts[participant_id][block_id] = {}
-                        no_end_timestampts[participant_id][block_id][trial_id] = {'name': current_trial_name.replace(trainsition_error_tag, ""),
+                        no_end_timestampts[participant_id][block_id][trial_id] = {'name': current_trial_name.replace(no_end_tag, ""),
+                                                                                  'end_capture': current_trial['end_capture'],
+                                                                                  'init_capture': current_trial['init_capture']}
+                    elif no_init_tag in current_trial_name and current_trial_name.replace(no_init_tag, "") == trial_name:
+                        row.append(RED+"No-init"+RESET) #("✅")
+                        if not participant_id in no_end_timestampts:
+                            no_end_timestampts[participant_id] = {}
+                        if not block_id in no_end_timestampts[participant_id]:
+                            no_end_timestampts[participant_id][block_id] = {}
+                        no_end_timestampts[participant_id][block_id][trial_id] = {'name': current_trial_name.replace(no_init_tag, ""),
                                                                                   'end_capture': current_trial['end_capture'],
                                                                                   'init_capture': current_trial['init_capture']}
                     else:
