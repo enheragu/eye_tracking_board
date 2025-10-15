@@ -240,13 +240,20 @@ class StateMachine:
         current_panel = self.processPanel(original_image, capture_idx, desnormalized_coord_list)
         if current_panel is not None and \
             not IsSamePanel(current_panel, self.current_test_key):
-            # Should have more data than 'end_capture' and 'init_capture'
+            # Should have more data than 'end_capture' and 'init_capture', if it has no data
+            # it adds transition error and 0 items for each
             if len(list(self.board_metrics_now.keys())) < 2:
-                self.board_metrics_now['transition_error'] = {'transition_error': {True: 0, False: 0}}
+                    self.board_metrics_now['transition_error'] = {'transition_error': {True: 0, False: 0}}
+                else:
+                    self.board_metrics_now['transition_error'] = {'transition_error': {True: 0, False: 0}}
             self.board_metrics_now['end_capture'] = capture_idx
             self.board_metrics_now['status'] = self.current_state
             self.board_metrics_now['trial_id'] = self.trial_id
-            self.board_metrics_store[(self.block_id, self.trial_id)] = {f"transition_error_{self.current_test_key['color']}_{self.current_test_key['shape']}": copy.deepcopy(self.board_metrics_now)}
+            if not 'init_capture' in self.board_metrics_now:
+                key = f"transition_error_no_init_{self.current_test_key['color']}_{self.current_test_key['shape']}"
+            else:
+                key = f"transition_error_no_end_{self.current_test_key['color']}_{self.current_test_key['shape']}"
+            self.board_metrics_store[(self.block_id, self.trial_id)] = {key: copy.deepcopy(self.board_metrics_now)}
             self.board_metrics_store['latest'] = self.board_metrics_store[(self.block_id, self.trial_id)]
             logErrorMsg(f"[StateMachine::error_init_state] [{capture_idx}] ERROR IN TRANSITION. New panel detected ({current_panel}), previous panel was {self.current_test_key}. Switch to get_test_name state. Test panel detected.")
             # print("[ERROR] --- Paused until input is introduced")

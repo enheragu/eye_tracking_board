@@ -12,8 +12,9 @@ export EEHA_EYEBOARD_SCRIPTFILE_PATH=$SOURCE
 export EEHA_EYEBOARD_SCRIPT_PATH=$( cd -P "$( dirname "$SOURCE" )" >/dev/null 2>&1 && pwd )
 
 
-# participants=("001"  "002"  "007"  "007_1"  "008"  "009"  "011"  "012"  "024"  "027"  "032"  "035"  "042"  "044"  "049"  "051"  "054"  "055"  "064")
-participants=("009")
+# participants=("001"  "002"  "007"  "007_1"  "008"  "009"  "011"  "012"  "024"  "027"  "032"  "035"  "042"  "044"  "049"  "051"  "054"  "055"  "064"  "Ale_005")
+participants=("001"  "007"  "011"  "012"  "024"  "027"  "032"  "035"  "042"  "051"  "054"  "055"  "Ale_005")
+# participants=("Ale_006")
 # participants discarded:
 # · "058" - cannot detect border due to problem in one of the pieces
 
@@ -40,7 +41,7 @@ printf "%s\n" "${participants[@]}" | xargs -P $NUM_PROCESSES -I {} bash -c '
 # participants=("002")
 # for participant in "${participants[@]}"
 # do
-#     clear && cd "$EEHA_EYEBOARD_SCRIPT_PATH" && python3 process_video.py -p "$participant" -t 'gaze' --visualization #--slow_analysis 
+#     clear && cd "$EEHA_EYEBOARD_SCRIPT_PATH" && python3 process_video.py -p "$participant" -t 'gaze' --slow_analysis --visualization
 #     # clear && cd "$EEHA_EYEBOARD_SCRIPT_PATH" && python3 process_video.py -p "$participant" -t 'fixations' -o
 # done
 

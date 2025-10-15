@@ -66,7 +66,7 @@ Clone the repository in a given location and install its requirementes with the 
 
 Below is a summary of the key presentations and publications associated with the code and information contained in this repository:
 
-- `[Poster presentation]` **Laura Cepero, Enrique Heredia-Aguado, Laura Sobrino, Laura Cantero, M. G. de Viedma, Victoria Plaza, María Pilar Aivar.**  
+- `[Poster presentation]` **Laura Cepero, Enrique Heredia-Aguado, Laura Sobrino, Laura Cantero, María García de Viedma, Victoria Plaza, María Pilar Aivar.**  
   *XIV Congress of the Spanish Society for Experimental Psychology (SEPEX)* (Almería, España. Octubre 2024).  
   **Bringing Visual Search to Life: how we find colored objects when performing a natural task.**
 
