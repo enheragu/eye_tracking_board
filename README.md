@@ -66,17 +66,18 @@ Clone the repository in a given location and install its requirementes with the 
 
 Below is a summary of the key presentations and publications associated with the code and information contained in this repository:
 
-- `[Poster presentation]` **Laura Cepero, Enrique Heredia-Aguado, Laura Sobrino, Laura Cantero, María García de Viedma, Victoria Plaza, María Pilar Aivar.**  
-  *XIV Congress of the Spanish Society for Experimental Psychology (SEPEX)* (Almería, España. Octubre 2024).  
-  **Bringing Visual Search to Life: how we find colored objects when performing a natural task.**
+- `[Poster presentation]` **Laura Cepero, Enrique Heredia-Aguado, Lidia Sobrino, Laura Cantero, María García de Viedma, Victoria Plaza, María Pilar Aivar.**  
+  *XIV Congress of the Spanish Society for Experimental Psychology (SEPEX)* (Almería, España. Octubre 2024). [(Abstracts Book ](https://www.sepex24.com/es/_files/ugd/5182f6_b112e823d83243949557d760e3eb534c.pdf?index=true)   
+  [**Bringing Visual Search to Life: how we find colored objects when performing a natural task.**](https://www.researchgate.net/publication/395732728_Bringing_Visual_Search_to_Life_how_we_find_colored_objects_when_performing_a_natural_task)
+  
 
 - `[Conference Talk]` **Enrique Heredia-Aguado, Laura Cepero, Luis Miguel Jiménez, Victoria Plaza, María Pilar Aivar.**  
-  *V Congreso Anual de Estudiantes de Doctorado* (Elche, España. Febrero 2025).  
+  *V Congreso Anual de Estudiantes de Doctorado* (Elche, España. Febrero 2025).  [(Abstracts Book - TBC)]()   
   [**Colaboración interdisciplinar en estudios de doctorado: Estudiando el proceso de búsqueda visual en personas a través de la visión por computador.**](https://www.researchgate.net/publication/390364612_Colaboracion_interdisciplinar_en_estudios_de_doctorado_Estudiando_el_proceso_de_busqueda_visual_en_personas_a_traves_de_la_vision_por_computador)
 
 - `[Conference Talk]` **Laura Cepero, Enrique Heredia-Aguado, Victoria Plaza, María Pilar Aivar.**  
-  *Reunión Científica sobre Atención (RECA14)* (Madrid, España. Abril 2025).  
-  **Visual Search Strategies: Comparing Screen-Based and Real-World Contexts.**
+  *Reunión Científica sobre Atención (RECA14)* (Madrid, España. Abril 2025). [(Abstracts Book - TBC)]()   
+  [**Visual Search Strategies: Comparing Screen-Based and Real-World Contexts.**](https://www.researchgate.net/publication/396733528_Visual_Search_Strategies_Comparing_Screen-Based_and_Real-World_Contexts)
 
 
 
