@@ -12,14 +12,15 @@ from PIL import Image
 from tqdm import tqdm
 
 # Configuración global
-CURRENT_FILE_PATH = os.path.dirname(os.path.abspath(__file__))
-CACHE_FILE = os.path.join(CURRENT_FILE_PATH, 'output/plots/data_cache.pkl')
-HASH_FILE = os.path.join(CURRENT_FILE_PATH, 'output/plots/data_hash.txt')
+REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+DEFAULT_OUTPUT_ROOT = os.environ.get('EEHA_OUTPUT_ROOT', '/media/quique/EXTERNAL_USB1/BusquedaVisualAnalysis/OutputData')
+CACHE_FILE = os.path.join(DEFAULT_OUTPUT_ROOT, 'plots/data_cache.pkl')
+HASH_FILE = os.path.join(DEFAULT_OUTPUT_ROOT, 'plots/data_hash.txt')
 
 # Configuración de plots
 PLOT_CONFIG = {
-    'output_path': os.path.join(CURRENT_FILE_PATH, 'output/plots'),
-    'image_path': os.path.join(CURRENT_FILE_PATH, 'media/TableroSinBordes.png'),
+    'output_path': os.path.join(DEFAULT_OUTPUT_ROOT, 'plots'),
+    'image_path': os.path.join(REPO_ROOT, 'docs/media/TableroSinBordes.png'),
     'cmap': LinearSegmentedColormap.from_list('custom', ['blue', 'cyan', 'lime', 'yellow', 'red']),
     'participant_colors': [
         '#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd',
@@ -329,7 +330,7 @@ if __name__ == '__main__':
     parser.add_argument('--plot-type', choices=['individual', 'combined', 'both'], default='both')
     args = parser.parse_args()
     
-    all_data = load_or_process_data(os.path.join(CURRENT_FILE_PATH, 'output/gaze'), force_reload=args.reload)
+    all_data = load_or_process_data(os.path.join(DEFAULT_OUTPUT_ROOT, 'gaze'), force_reload=args.reload)
     
     if args.plot_type in ['individual', 'both']:
         print(f"Plot individual data")

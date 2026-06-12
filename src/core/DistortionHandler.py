@@ -5,7 +5,7 @@ import os
 import json
 import cv2 as cv
 import numpy as np
-from src.utils import log
+from src.core.utils import log
 
 
 """
@@ -18,18 +18,17 @@ class DistortionHandler():
         self.newcameratx, self.roi_undistort, self.mapx, self.mapy = self.undistortImageParams(frame_height, frame_width)
 
     def parseCalibrationData(self, calibration_json_path = 'camera_calib.json'):
-        if os.path.exists(calibration_json_path):
-            try:
-                with open(calibration_json_path) as file:
-                    data = json.load(file)
+        if not os.path.exists(calibration_json_path):
+            raise FileNotFoundError(f"Camera calibration file not found: {calibration_json_path}")
 
-                cameraMatrix = np.array(data['camera_matrix'])
-                distCoeffs = np.array(data['distortion_coefficients'])
+        with open(calibration_json_path) as file:
+            data = json.load(file)
 
-                log(f'Camera matrix: \n{cameraMatrix}')
-                log(f'distortion_coefficients: \t{distCoeffs}')
-            except:
-                log("Calibration file not valid.")
+        cameraMatrix = np.array(data['camera_matrix'])
+        distCoeffs = np.array(data['distortion_coefficients'])
+
+        log(f'Camera matrix: \n{cameraMatrix}')
+        log(f'distortion_coefficients: \t{distCoeffs}')
         return cameraMatrix, distCoeffs
 
     def undistortImageParams(self, frame_height, frame_width):
@@ -44,8 +43,6 @@ class DistortionHandler():
         Corrects distortion and perspective
     """
     def undistortImage(self,capture):
-        global mapx,mapy,roi_undistort
-
         display_image = capture.copy()
 
         # If calibration data is available, undistort the image
@@ -84,23 +81,3 @@ class DistortionHandler():
             corrected_coords = undistorted_points
         
         return corrected_coords
-
-
-    """
-        Translates from new_image coordinates (corrected and undistorted) to distorted image.
-        An homography can be provided to correct it along with the distortion.
-    """
-    def reverseCoordinates(self, undistorted_points, homography = None):
-        
-        dst = np.array(undistorted_points, dtype=np.float32)
-        if homography is not None:
-            dst = cv.perspectiveTransform(undistorted_points.reshape(-1, 1, 2), np.linalg.inv(homography))
-
-        ptsOut = np.array(dst, dtype='float32')
-        ptsTemp = np.array([], dtype='float32')
-        rtemp = ttemp = np.array([0,0,0], dtype='float32')
-        ptsOut = cv.undistortPoints(ptsOut, self.cameraMatrix, None)
-        ptsTemp = cv.convertPointsToHomogeneous( ptsOut )
-        dst, _ = cv.projectPoints( ptsTemp, rtemp, ttemp, self.cameraMatrix, self.distCoeffs, ptsOut )
-
-        return dst

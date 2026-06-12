@@ -1,6 +1,7 @@
 wheel
 numpy
-opencv-python
+# contrib already includes everything in the base opencv-python package; having
+# both installed at once leads to mixed-version cv2 installs
 opencv-contrib-python
 PyYAML
 scikit-learn

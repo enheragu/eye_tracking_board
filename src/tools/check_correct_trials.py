@@ -1,16 +1,21 @@
 import os
+import sys
 import yaml
 
 from concurrent.futures import ProcessPoolExecutor, as_completed
 
 from tabulate import tabulate
 
-from src.utils import parseYaml
+# Tools live in tools/, make the repo root importable (src package, entry points)
+REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+sys.path.insert(0, REPO_ROOT)
+
+from src.core.utils import parseYaml
 
 # Configuración global
-CURRENT_FILE_PATH = os.path.dirname(os.path.abspath(__file__))
-DATA_PATH = os.path.join(CURRENT_FILE_PATH, 'output/gaze')
-trials_config_path = os.path.join(CURRENT_FILE_PATH, 'cfg/default_trials_config.yaml')
+DEFAULT_OUTPUT_ROOT = os.environ.get('EEHA_OUTPUT_ROOT', '/media/quique/EXTERNAL_USB1/BusquedaVisualAnalysis/OutputData')
+DATA_PATH = os.path.join(DEFAULT_OUTPUT_ROOT, 'gaze')
+trials_config_path = os.path.join(REPO_ROOT, 'cfg/default_trials_config.yaml')
 yaml_file_name = "data_{}.yaml"
 BLOCKS_CONFIG = parseYaml(trials_config_path)['test_block_list']
 
@@ -105,7 +110,7 @@ def generate_presence_table(participants_data):
 
     return headers, table
 
-def table_to_html(table, headers,  output_file="output/check_trials_table.html"):
+def table_to_html(table, headers,  output_file=os.path.join(DEFAULT_OUTPUT_ROOT, "check_trials_table.html")):
     ansi_to_html = {
         "\033[92m": '<span class="green">',
         "\033[91m": '<span class="red">',

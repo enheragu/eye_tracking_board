@@ -21,7 +21,19 @@ class bcolors:
 
 ## log in terminal without affecting tqdm bar
 def log(*args, **kwargs):
-    tqdm.write(*args, **kwargs)   
+    tqdm.write(*args, **kwargs)
+
+## Verbose logging, disabled by default. High frequency logs (per gaze sample/frame)
+# should use log_debug so normal runs are not slowed down by terminal IO.
+LOG_VERBOSE = False
+
+def setVerboseLog(enabled):
+    global LOG_VERBOSE
+    LOG_VERBOSE = enabled
+
+def log_debug(*args, **kwargs):
+    if LOG_VERBOSE:
+        tqdm.write(*args, **kwargs)
 
 from types import MappingProxyType
 def print_tuple(tupla, indent=0):
@@ -223,38 +235,6 @@ def resize_with_black_padding(image, new_size):
     padded_img[y_offset:y_offset + new_h, x_offset:x_offset + new_w] = resized_img
 
     return padded_img
-
-
-def getMosaic(capture_idx, last_capture_idx, fps, frame_width, frame_height, titles_list, images_list, rows, cols, resize = 1, debug_data_list = None):
-
-    if debug_data_list is None:
-        debug_data_list = [None*len(images_list)]
-
-    for index, resized_image in enumerate(images_list):
-        images_list[index] = cv.resize(resized_image, (int(frame_width*resize), int(frame_height*resize)))
-
-    mosaic = buildMosaic(titles_list=titles_list, 
-                images_list=images_list, 
-                rows=rows, cols=cols,
-                debug_data_list=debug_data_list)
-
-    text = f'Frame: {capture_idx}/{last_capture_idx}'
-    font = cv.FONT_HERSHEY_SIMPLEX
-    scale = 0.4
-    thickness = 1
-    text_size, _ = cv.getTextSize(text, font, scale, thickness)
-    text_width, text_height = text_size
-    x = mosaic.shape[1] - text_width - 1  # 10 pixel margin
-    y = text_height + 1  # 10 pixel margin
-    cv.putText(mosaic, text, (x, y), font, scale, color=(0,0,0), thickness=thickness)
-
-    cv.putText(mosaic, f"FPS: {fps:.1f}", org=(3, 10),
-        fontFace=font, fontScale=scale, color=(0,0,0), thickness=thickness)
-    
-
-    return mosaic
-
-
 
 
 ################################

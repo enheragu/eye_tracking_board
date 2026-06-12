@@ -6,7 +6,7 @@ import math
 import cv2 as cv
 import numpy as np
 
-from src.utils import getMaskHue, claheEqualization, buildMosaic, projectCenter
+from src.core.utils import getMaskHue, claheEqualization, buildMosaic, projectCenter
 
 
 

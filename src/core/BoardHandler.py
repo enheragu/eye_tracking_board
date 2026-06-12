@@ -10,10 +10,10 @@ import numpy as np
 import yaml
 from yaml.loader import SafeLoader
 
-from src.ArucoBoardHandler import ArucoBoardHandler, detectAllArucos
+from src.core.ArucoBoardHandler import ArucoBoardHandler
 
-from src.utils import interpolate_points, getMaskHue, log
-from src.detect_shapes import checkShape
+from src.core.utils import interpolate_points, getMaskHue, log, log_debug
+from src.core.detect_shapes import checkShape
 
 def getCellWH(cell_matrix, i, j):
     x, y = cell_matrix[i, j]
@@ -59,8 +59,9 @@ class BoardHandler:
         self.display_detected_board_view = None
 
         self.homography = None
-        self.warpedWidth = None
-        self.warpedHeight = None
+        self.warp_width = None
+        self.warp_height = None
+        self.contour_detected_raw = False
 
         self.display_detected_board_contour = True      # Display detected contour of the board
         self.display_configuration_board_matrix = True  # Display matrix from configuration
@@ -73,6 +74,7 @@ class BoardHandler:
         self.cell_contours = None
 
         self.cell_matrix, self.cell_width, self.cell_height = None, None, None
+        self.board_origin, self.board_width, self.board_height = None, None, None
 
         ## Add inertia to board contour, if not found in N frames just propagates
         # previous
@@ -81,11 +83,12 @@ class BoardHandler:
         self.board_contour_intertia_counter = 0
         
         
-    def step(self, image):
-        undistorted_image = self.distortion_handler.undistortImage(image)
-        corners, ids = detectAllArucos(undistorted_image)
+    def step(self, undistorted_image, corners, ids):
         self.board_view = self.computeApplyHomography(undistorted_image, corners, ids)
         self.board_contour = self.detectContour(self.board_view)
+        # Raw detection state (before inertia) so trial end can be backdated to the
+        # last frame in which the board was actually visible
+        self.contour_detected_raw = self.board_contour is not None
 
         if self.board_contour is None:
             if self.board_contour_inertia_step > self.board_contour_intertia_counter:
@@ -163,35 +166,36 @@ class BoardHandler:
             board_data_dict=self.board_data_dict,
             fixation_coord_list=self.fixation_coord_list)
 
-    def getDistortedOriginalVisualization(self, undistorted_image, corners, ids):
+    """
+        Projects a set of points from the warped (top) board view back to the
+        undistorted image view through the inverse homography
+    """
+    def warpToUndistorted(self, points, inv_homography):
+        pts = np.asarray(points, dtype=np.float32).reshape(-1, 1, 2)
+        return cv.perspectiveTransform(pts, inv_homography)
+
+    def getUndistortedVisualization(self, undistorted_image, corners, ids):
         display_cfg_board_view = undistorted_image
         display_detected_board_view = undistorted_image
-        if self.board_contour is not None:
-            board_contour_extended = interpolate_points(self.board_contour).astype(np.float32)
-            undistorted_board_contour = self.distortion_handler.reverseCoordinates(board_contour_extended, homography = self.homography).astype(np.int32)
+        if self.board_contour is not None and self.homography is not None:
+            inv_homography = np.linalg.inv(self.homography)
+
+            board_contour_extended = interpolate_points(self.board_contour)
+            undistorted_board_contour = self.warpToUndistorted(board_contour_extended, inv_homography).astype(np.int32)
 
             undistorted_fixation_coord_list = []
-            ## Disabled for now, needs correction in the revers coordinate computation
-            # undistorted_fixation_coord_list = self.fixation_coord_list
-            # if undistorted_fixation_coord_list:
-            #     for undistorted_fixation_coord in undistorted_fixation_coord_list:
-            #         undistorted_fixation_coord = undistorted_fixation_coord.astype(np.float32)
-            #         undistorted_fixation_coord = self.distortion_handler.reverseCoordinates(undistorted_fixation_coord, homography = self.homography).astype(np.int32)[0]
-            
+
             undistorted_cell_matrix = self.cell_matrix
             if undistorted_cell_matrix is not None:
-                undistorted_cell_matrix = np.zeros((self.board_size[1], self.board_size[0], 2), dtype=int)
+                projected = self.warpToUndistorted(self.cell_matrix.reshape(-1, 2), inv_homography)
+                undistorted_cell_matrix = projected.reshape(self.board_size[1], self.board_size[0], 2).astype(int)
 
-                for i in range(len(undistorted_cell_matrix)):
-                    for j in range(len(undistorted_cell_matrix[i])):
-                        coord = np.array([self.cell_matrix[i][j]], dtype=np.float32)
-                        undistorted_cell_matrix[i][j] = self.distortion_handler.reverseCoordinates(coord, homography = self.homography).astype(np.int32)[0]
-
-            undistorted_cell_contours = self.cell_contours
-            if undistorted_cell_contours is not None:
-                for index, contour in enumerate(undistorted_cell_contours):
-                    contour_extended = interpolate_points(contour).astype(np.float32)
-                    undistorted_cell_contours[index] = self.distortion_handler.reverseCoordinates(contour_extended, homography = self.homography).astype(np.int32)
+            undistorted_cell_contours = None
+            if self.cell_contours is not None:
+                undistorted_cell_contours = []
+                for contour in self.cell_contours:
+                    contour_extended = interpolate_points(contour)
+                    undistorted_cell_contours.append(self.warpToUndistorted(contour_extended, inv_homography).astype(np.int32))
 
             display_cfg_board_view, display_detected_board_view = self.handleVisualization(undistorted_image, undistorted_board_contour, self.board_size, undistorted_cell_matrix, undistorted_cell_contours, self.board_data_dict, undistorted_fixation_coord_list)
 
@@ -215,25 +219,13 @@ class BoardHandler:
         return display_cfg_board_view, display_detected_board_view
 
     def computeApplyHomography(self, undistorted_image, corners, ids):
-        ## Version detecting contour of black edges of the game
         display_image = undistorted_image
-        # board_contour = self.detectContour(undistorted_image)
-        # if board_contour is not None: 
-            # Uses detected board contour as if it were an aruco
-            # board_image_contours = np.array([board_contour.reshape(4, 2)], dtype=np.float32)
-            # self.homography, self.warpedWidth, self.warpedHeight = aruco_board_transform(
-            #                         aruco_image_contours=board_image_contours,
-            #                         aruco_3d_contours=self.board_corners_3d,
-            #                         board_3d_contours=self.margin_points_3d,
-            #                         img_shape=undistorted_image.shape)
 
         self.homography, self.warp_width, self.warp_height, rotated = self.aruco_board_handler.getTransform(undistorted_image, corners, ids)
-        self.board_data_dict = self.board_data_dict_rotated if rotated else self.board_data_dict_upright 
+        self.board_data_dict = self.board_data_dict_rotated if rotated else self.board_data_dict_upright
 
-        # display_image = np.zeros((self.warp_width, self.warp_height, 3), dtype=undistorted_image.dtype)
-        
         if self.homography is not None:
-            display_image = cv.warpPerspective(undistorted_image, self.homography, (self.warpedWidth, self.warpedHeight))
+            display_image = cv.warpPerspective(undistorted_image, self.homography, (self.warp_width, self.warp_height))
 
         return display_image
 
@@ -246,26 +238,23 @@ class BoardHandler:
         coord_info_list = []
         if coordinates_list and self.board_contour is not None and len(self.board_contour) != 0 \
             and self.board_data_dict is not None:
-            log(f"[BoardHandler::getPixelInfo] Check {len(coordinates_list)} fixation for this frame.") 
-        
+            log_debug(f"[BoardHandler::getPixelInfo] Check {len(coordinates_list)} fixation for this frame.")
+
             for coordinates in coordinates_list:
                 corrected_coord = self.distortion_handler.correctCoordinates(coordinates, self.homography)
-                self.fixation_coord_list.append(self.distortion_handler.correctCoordinates(coordinates, self.homography))
-                # log(f'[BoardHandler::getPixelInfo] Original coordinates: {coordinates = }')
-                # log(f'[BoardHandler::getPixelInfo] Fixation projected: {self.fixation_coord_list = }')
+                self.fixation_coord_list.append(corrected_coord)
                 idx = self.getCellIndex(corrected_coord)
-                # log(f'[BoardHandler::getPixelInfo] Cell index: {idx = }')
-                
+
                 if idx[0] is not None:
                     color = self.board_data_dict[idx][0]
                     shape = self.board_data_dict[idx][1]
                     slot = self.board_data_dict[idx][2]
                     board_coord = idx
 
-                    log(f"\t\t· Fixation detected in: {self.board_data_dict[idx]} in {board_coord}.")
+                    log_debug(f"\t\t· Fixation detected in: {self.board_data_dict[idx]} in {board_coord}.")
                     coord_info_list.append((color, shape, slot, board_coord, corrected_coord))
                 else:
-                    log(f"\t\t· Fixation not detected, coordinates not detected in board: {corrected_coord}.")
+                    log_debug(f"\t\t· Fixation not detected, coordinates not detected in board: {corrected_coord}.")
                     coord_info_list.append(('not_board', 'not_board', False, [-1,-1], corrected_coord))
                 
         return coord_info_list
@@ -326,8 +315,15 @@ class BoardHandler:
     def computeBoardMatrixFromContour(self, board_contour, board_size):
         x, y, w, h = cv.boundingRect(board_contour)
 
-        cell_width = w // board_size[0]
-        cell_height = h // board_size[1]
+        # Float cell sizes: integer division accumulated a remainder of up to
+        # board_size-1 px at the right/bottom edges, misclassifying gaze samples
+        # on the last cells as not_board
+        cell_width = w / board_size[0]
+        cell_height = h / board_size[1]
+
+        self.board_origin = (x, y)
+        self.board_width = w
+        self.board_height = h
 
         self.cell_contours = []
         cell_matrix = np.zeros((board_size[1], board_size[0], 2), dtype=int)
@@ -352,33 +348,26 @@ class BoardHandler:
         if x is None or y is None:
             return np.array([None, None])
 
-        x_board_origin = self.cell_matrix[0][0][0] - self.cell_width / 2
-        y_board_origin = self.cell_matrix[0][0][1] - self.cell_height / 2
-
-        relative_x = x - x_board_origin
-        relative_y = y - y_board_origin
-
-        norm_x = relative_x/self.warp_width
-        norm_y = relative_y/self.warp_height
+        # Normalized against the detected board area itself, so [0,0] is the board
+        # top-left corner and [1,1] its bottom-right corner
+        norm_x = (x - self.board_origin[0]) / self.board_width
+        norm_y = (y - self.board_origin[1]) / self.board_height
 
         return np.array([norm_x, norm_y])
 
-        
+
     def getCellIndex(self, pixel_coord):
         x, y = pixel_coord[0]
-        
+
         if x is None or y is None:
             return None, None
-        
-        x_board_origin = self.cell_matrix[0][0][0] - self.cell_width / 2
-        y_board_origin = self.cell_matrix[0][0][1] - self.cell_height / 2
 
-        relative_x = x - x_board_origin
-        relative_y = y - y_board_origin
+        relative_x = x - self.board_origin[0]
+        relative_y = y - self.board_origin[1]
 
         cell_row = int(relative_y // self.cell_height)
         cell_col = int(relative_x // self.cell_width)
-        
+
         if 0 <= cell_row < self.cell_matrix.shape[0] and \
         0 <= cell_col < self.cell_matrix.shape[1]:
             return int(cell_col), int(cell_row)
@@ -435,15 +424,16 @@ class BoardHandler:
 
         mean_h, mean_s, mean_v = np.mean(reference_edges, axis=0)
         std_h, std_s, std_v = np.std(reference_edges, axis=0)
-        s_margins = [min(0, mean_s-4*std_s), min(255, mean_s+4*std_s)]
-        v_margins = [min(0, mean_v-4*std_v), min(255, mean_v+4*std_v)]
+        # Lower bounds clamp at 0 (max, not min: with min they were always 0 and the
+        # mask accepted any dark pixel, e.g. black clothing entering the view)
+        s_margins = [max(0, mean_s-4*std_s), min(255, mean_s+4*std_s)]
+        v_margins = [max(0, mean_v-4*std_v), min(255, mean_v+4*std_v)]
 
-        # log(f"{mean_h = }\t{mean_s = }\t{mean_v = }")
-        # log(f"{std_h = }\t{std_s = }\t{std_v = }")
-        
-        # Take any hue with low brightness
-        # res = getMaskHue(hue, sat, intensity, h_ref=0, h_epsilon=180, s_margins=[0,255], v_margins = [0,90])
-        res = getMaskHue(hue, sat, intensity, h_ref=mean_h, h_epsilon=4*std_h, s_margins=s_margins, v_margins = v_margins)
+        # mean_h/std_h come from the HSV_FULL channel (0-255) but getMaskHue expects
+        # degrees (0-360), convert before passing
+        h_ref_deg = mean_h * 360.0 / 255.0
+        h_eps_deg = 4 * std_h * 360.0 / 255.0
+        res = getMaskHue(hue, sat, intensity, h_ref=h_ref_deg, h_epsilon=h_eps_deg, s_margins=s_margins, v_margins = v_margins)
         # cv.imshow(f'border_mask', res)
 
         edge_image = cv.Canny(res, threshold1=50, threshold2=200)
