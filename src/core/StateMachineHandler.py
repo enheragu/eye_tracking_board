@@ -13,10 +13,11 @@ import yaml
 from yaml.loader import SafeLoader
 from tabulate import tabulate
 
-from src.utils import dumpYaml, parseYaml
-from src.utils import getMosaic, bcolors
-from src.utils import log
-from src.ArucoBoardHandler import detectAllArucos
+from src.core.utils import dumpYaml, parseYaml
+from src.core.utils import bcolors
+from src.core.utils import log
+from src.core.version import __version__
+from src.core.ArucoBoardHandler import detectAllArucos
 
 def bufferStateChangeMsg(msg):
     return f"{bcolors.BOLD}{bcolors.OKCYAN}{msg}{bcolors.ENDC}\n"
@@ -44,7 +45,7 @@ class ExceptionNoMoreBlocks(Exception):
     State Machine that handles program execution
 """
 class StateMachine:
-    def __init__(self, board_handler, panel_handler, eye_data_handler, sequence_cfg_path, video_fps, slow_analysis = False):
+    def __init__(self, board_handler, panel_handler, eye_data_handler, distortion_handler, sequence_cfg_path, video_fps, slow_analysis = False):
         # Estado init
         self.current_state = "init"
         self.video_fps = video_fps
@@ -52,6 +53,12 @@ class StateMachine:
         self.board_handler = board_handler
         self.panel_handler = panel_handler
         self.eye_data_handler = eye_data_handler
+        self.distortion_handler = distortion_handler
+
+        self.undistorted_image = None
+        # Last frame in which the board contour was actually detected (not propagated
+        # by inertia), used to backdate end_capture to the real occlusion start
+        self.last_raw_contour_frame = None
 
 
         with open(sequence_cfg_path) as file:
@@ -72,6 +79,11 @@ class StateMachine:
         self.board_contour_switch_state_threshold = 4
         self.board_contour_nondetected_counter = 0
         self.board_contour_detected_counter = 0
+        # ~0.2s of solid visibility required: brief unstable windows (participant
+        # still approaching) fired premature starts. init_capture is backdated to the
+        # streak start so genuine trials lose no duration
+        self.board_contour_start_confirm_threshold = 6
+        self.contour_streak_start_frame = None
         self.panel_detected_counter = []
         self.panel_detected_threshold = 2
 
@@ -102,76 +114,72 @@ class StateMachine:
         self.last_frame_number = math.inf
     
     def visualization(self, original_image, capture_idx, last_capture_idx, frame_width, frame_height, participan_id = ""):
-        
-        board_view_cfg, board_view_detected = self.board_handler.getVisualization(original_image)
-        image_board_cfg, image_board_detected = self.board_handler.getDistortedOriginalVisualization(original_image, self.corners, self.ids)
 
-        panel_view = self.panel_handler.getVisualization(self.corners, self.ids)
-                
+        display_image = self.undistorted_image if self.undistorted_image is not None else original_image
+        board_view_cfg, _ = self.board_handler.getVisualization(display_image)
+        _, canvas = self.board_handler.getUndistortedVisualization(display_image, self.corners, self.ids)
+        if canvas is display_image:
+            canvas = display_image.copy()
+
+        ## Gaze samples over the camera view. Gaze coords live in the original
+        # (distorted) frame, project them to the undistorted view being displayed
         if self.norm_coord_list and self.board_handler.display_fixation:
             for desnormalized_coord in self.desnormalized_coord_list:
                 if desnormalized_coord[0][0] < 0 or desnormalized_coord[0][1] < 0:
                     continue
-                cv.circle(image_board_cfg, desnormalized_coord[0], radius=5, color=(0,255,0), thickness=-1)
-                cv.circle(image_board_detected, desnormalized_coord[0], radius=5, color=(0,255,0), thickness=-1)
-        
-        ## Just logging stuff :)
-        debug_data_view = np.zeros_like(panel_view)
-        debug_data = [f"Participant: {participan_id}", f'Current state: {self.current_state}']
+                und_coord = self.distortion_handler.correctCoordinates(desnormalized_coord, homography=None)
+                und_coord = (int(und_coord[0][0]), int(und_coord[0][1]))
+                cv.circle(canvas, und_coord, radius=5, color=(0,255,0), thickness=-1)
+
+        ## Status panel (top-left)
+        debug_data = [f"Participant: {participan_id}   Frame: {capture_idx}/{last_capture_idx}   FPS: {self.tm.getFPS():.1f}",
+                      f"State: {self.current_state}"]
         if self.current_test_key is not None:
-            target_coord = self.board_handler.getShapeCoord(self.current_test_key['shape'], self.current_test_key['color'])
-            if target_coord[0] is not None:
-                cv.circle(image_board_cfg, target_coord, radius=5, color=(255,255,0), thickness=-1)
-                cv.circle(image_board_detected, target_coord, radius=5, color=(255,255,0), thickness=-1)
-            
             debug_data.append(f"Current Test: Block: {self.test_block_count}, trial: {self.test_trial_count-1};  trial_id: {self.trial_id}")
-            debug_data.append(f"              Search -> {self.current_test_key['color']} {self.current_test_key['shape']}")
-            debug_data.append(f"                        Detected arucos: {self.current_test_key['arucos']}")
-            
-
+            debug_data.append(f"   Search -> {self.current_test_key['color']} {self.current_test_key['shape']} (arucos: {self.current_test_key['arucos']})")
             if 'init_capture' in self.board_metrics_now:
-                debug_data.append(f"    - Started at {self.board_metrics_now['init_capture']} frame.")
+                debug_data.append(f"   Started at frame {self.board_metrics_now['init_capture']}")
+        elif 'latest' in self.board_metrics_store and self.board_metrics_store['latest']:
+            board_metrics_prev = list(self.board_metrics_store['latest'].values())[0]
+            board_metrics_prev_test = list(self.board_metrics_store['latest'].keys())[0]
+            debug_data.append(f"Previous Test: trial_id: {board_metrics_prev.get('trial_id', '?')}; Search -> {board_metrics_prev_test}")
+            if 'init_capture' in board_metrics_prev and 'end_capture' in board_metrics_prev:
+                debug_data.append(f"   Frames {board_metrics_prev['init_capture']} to {board_metrics_prev['end_capture']}"
+                                  f" ({board_metrics_prev['end_capture']-board_metrics_prev['init_capture']} frames)")
 
-        elif 'last' in self.board_metrics_store and self.board_metrics_store['last']:
-            board_metrics_prev = list(self.board_metrics_store['last'].values())[0]
-            board_metrics_prev_test = list(self.board_metrics_store['last'].keys())[0]
-            debug_data.append(f"Previous Test: Block: {self.test_block_count}, trial: {self.test_trial_count-1}; trial_id: {self.trial_id}")
-            debug_data.append(f"               Search -> {board_metrics_prev_test}")
+        box_h = 22 * len(debug_data) + 14
+        box_w = int(canvas.shape[1] * 0.55)
+        roi = canvas[0:box_h, 0:box_w]
+        canvas[0:box_h, 0:box_w] = (roi * 0.35).astype(np.uint8)
+        for index, text in enumerate(debug_data):
+            cv.putText(canvas, text, (10, 26 + 22*index), cv.FONT_HERSHEY_SIMPLEX, 0.55, (255,255,0), 1, cv.LINE_AA)
 
-            if 'init_capture' in board_metrics_prev:
-                debug_data.append(f"    - Started at {board_metrics_prev['init_capture']} frame.")
-            if 'end_capture' in board_metrics_prev:
-                debug_data.append(f"    - Ended at {board_metrics_prev['end_capture']} frame.")
-                debug_data.append(f"    - Took {board_metrics_prev['end_capture']-board_metrics_prev['init_capture']} frames.")
-        
-        mosaic = getMosaic(capture_idx=capture_idx, last_capture_idx=last_capture_idx, fps=self.tm.getFPS(),
-                           frame_width=frame_width, frame_height=frame_height, 
-                           titles_list=['Complete Cfg', 'Board Cfg', 'Panel View', 'Complete Detected', 'Board Detected', 'Debug'], 
-                           images_list=[image_board_cfg, board_view_cfg, panel_view, image_board_detected, board_view_detected, debug_data_view], 
-                           debug_data_list=[None,None,None,None,None,debug_data],
-                           rows=2, cols=3, resize = 2/5)
-        
-        # mosaic_store = getMosaic(capture_idx, frame_width, frame_height, titles_list=['Board Detected', 'Debug'], 
-        #              images_list=[board_view_detected, debug_data_view], 
-        #              debug_data_list=[None,debug_data],
-        #              rows=2, cols=1, resize = 2/5)
-        
-        # cv.imwrite('image_board_cfg.png',image_board_cfg)
-        # cv.imwrite('board_view_cfg.png',board_view_cfg)
-        # cv.imwrite('panel_view.png',panel_view)
-        # cv.imwrite('image_board_detected.png',image_board_detected)
-        # cv.imwrite('board_view_detected.png',board_view_detected)
-        # cv.imwrite('debug_data_view.png',debug_data_view)
+        ## PiP (bottom-right): warped board with grid and gaze when the grid is
+        # valid; panel view while a panel is being shown; nothing otherwise
+        pip = None
+        if self.board_handler.cell_matrix is not None and self.board_handler.board_view is not None:
+            pip = board_view_cfg
+            if self.current_test_key is not None:
+                target_coord = self.board_handler.getShapeCoord(self.current_test_key['shape'], self.current_test_key['color'])
+                if target_coord[0] is not None:
+                    cv.circle(pip, (int(target_coord[0]), int(target_coord[1])), radius=14, color=(255,255,0), thickness=3)
+        elif self.panel_handler.getCurrentPanel() is not None:
+            pip = self.panel_handler.getVisualization(self.corners, self.ids)
 
-        # key = cv.waitKey()
-        # if key == ord('q') or key == ord('Q') or key == 27:
-        #     exit()
+        if pip is not None and pip.shape[0] > 0 and pip.shape[1] > 0:
+            pip_w = int(canvas.shape[1] * 0.38)
+            pip_h = max(1, int(pip.shape[0] * pip_w / pip.shape[1]))
+            pip_resized = cv.resize(pip, (pip_w, pip_h))
+            y0 = canvas.shape[0] - pip_h - 8
+            x0 = canvas.shape[1] - pip_w - 8
+            cv.rectangle(canvas, (x0-2, y0-2), (x0+pip_w+1, y0+pip_h+1), (255,255,255), 2)
+            canvas[y0:y0+pip_h, x0:x0+pip_w] = pip_resized
 
-        return mosaic, cv.resize(mosaic, (frame_width*3, frame_height*2))
+        return canvas, cv.resize(canvas, (frame_width, frame_height))
         
-    def processPanel(self, original_image, capture_idx, desnormalized_coord_list):
+    def processPanel(self, undistorted_image, capture_idx, desnormalized_coord_list):
         current_panel = None
-        self.panel_handler.step(original_image, self.corners, self.ids)
+        self.panel_handler.step(undistorted_image, self.corners, self.ids)
 
         shape, aruco, panel = self.panel_handler.getPixelInfo(desnormalized_coord_list)
         current_detected_panel = self.panel_handler.getCurrentPanel()
@@ -199,28 +207,29 @@ class StateMachine:
     def step(self, original_image, capture_idx):
         self.tm.start()
 
-        self.corners, self.ids = detectAllArucos(original_image)
+        ## Undistort and detect arucos once per frame; both image and detections are
+        # shared by panel and board handlers (it was being done twice per frame, and
+        # panel homographies mixed corners from the distorted image)
+        self.undistorted_image = self.distortion_handler.undistortImage(original_image)
+        self.corners, self.ids = detectAllArucos(self.undistorted_image)
 
         self.init_frame_number = min(self.init_frame_number, capture_idx)
         self.last_frame_number = capture_idx
-        
+
         self.norm_coord_list = self.eye_data_handler.step(capture_idx)
         self.desnormalized_coord_list = []
         for norm_coord in self.norm_coord_list:
-            # log(f'{capture_idx =}')
+            # Gaze normalized coords are relative to the original (distorted) frame
             desnormalized_x = int(norm_coord[0] * original_image.shape[1])
             desnormalized_y = int(norm_coord[1] * original_image.shape[0])
             self.desnormalized_coord_list.append(np.array([[desnormalized_x, desnormalized_y]]))
             self.fixation_data_store['total'] += 1
-        
-        # log(f'{norm_coord = }')
-        # log(f'{desnormalized_coord_list = }')
 
         # Propagate this frame to next state to no to lose steps
-        previous_state = None   
+        previous_state = None
         while self.current_state != previous_state:
             previous_state = self.current_state
-            self.state_info[self.current_state]['callback'](original_image, capture_idx, self.desnormalized_coord_list)
+            self.state_info[self.current_state]['callback'](self.undistorted_image, capture_idx, self.desnormalized_coord_list)
             self.frame_speed_multiplier = self.state_info[self.current_state]['frame_mult']
         
         if self.norm_coord_list: self.fixation_data_store[self.current_state] += len(self.norm_coord_list)
@@ -234,39 +243,45 @@ class StateMachine:
         
         self.tm.stop()
 
-    ## Used in case something happends and some state change is missed. If a new pannel appears
-    # status is reseted and data is stored as errored
-    def is_error_init_state(self, original_image, capture_idx, desnormalized_coord_list):
-        current_panel = self.processPanel(original_image, capture_idx, desnormalized_coord_list)
+    ## Used in case something happends and some state change is missed. If a new pannel
+    # appears while a trial is running with data already gathered, the trial is closed
+    # as valid (the board stopped being attended; end is backdated to its last real
+    # sighting) with a distinctive status. Without gathered data it is stored as error.
+    def is_error_init_state(self, undistorted_image, capture_idx, desnormalized_coord_list):
+        current_panel = self.processPanel(undistorted_image, capture_idx, desnormalized_coord_list)
         if current_panel is not None and \
             not IsSamePanel(current_panel, self.current_test_key):
-            # Should have more data than 'end_capture' and 'init_capture', if it has no data
-            # it adds transition error and 0 items for each
-            if len(list(self.board_metrics_now.keys())) < 2:
-                    self.board_metrics_now['transition_error'] = {'transition_error': {True: 0, False: 0}}
-                else:
-                    self.board_metrics_now['transition_error'] = {'transition_error': {True: 0, False: 0}}
-            self.board_metrics_now['end_capture'] = capture_idx
-            self.board_metrics_now['status'] = self.current_state
-            self.board_metrics_now['trial_id'] = self.trial_id
-            if not 'init_capture' in self.board_metrics_now:
-                key = f"transition_error_no_init_{self.current_test_key['color']}_{self.current_test_key['shape']}"
+
+            if 'init_capture' in self.board_metrics_now:
+                # Trial was running: the hand occlusion lost the race against the next
+                # panel detection. Close it at the last frame the board was visible.
+                end_capture = self.last_raw_contour_frame if self.last_raw_contour_frame is not None else capture_idx
+                self.board_metrics_now['end_capture'] = end_capture
+                self.trimTrialToFrame(self.board_metrics_now, end_capture)
+                self.board_metrics_now['status'] = 'test_finish_by_next_panel'
+                self.board_metrics_now['trial_id'] = self.trial_id
+                key = f"{self.current_test_key['color']}_{self.current_test_key['shape']}"
+                logStateChange(f"[StateMachine::error_init_state] [{capture_idx}] New panel detected ({current_panel}) while trial for {self.current_test_key} was running. Trial closed at frame {end_capture} with status test_finish_by_next_panel.")
             else:
-                key = f"transition_error_no_end_{self.current_test_key['color']}_{self.current_test_key['shape']}"
+                self.board_metrics_now['transition_error'] = {'transition_error': {True: 0, False: 0}}
+                self.board_metrics_now['end_capture'] = capture_idx
+                self.board_metrics_now['status'] = self.current_state
+                self.board_metrics_now['trial_id'] = self.trial_id
+                key = f"transition_error_no_init_{self.current_test_key['color']}_{self.current_test_key['shape']}"
+                logErrorMsg(f"[StateMachine::error_init_state] [{capture_idx}] ERROR IN TRANSITION. New panel detected ({current_panel}), previous panel was {self.current_test_key}. Switch to get_test_name state. Test panel detected.")
+
             self.board_metrics_store[(self.block_id, self.trial_id)] = {key: copy.deepcopy(self.board_metrics_now)}
             self.board_metrics_store['latest'] = self.board_metrics_store[(self.block_id, self.trial_id)]
-            logErrorMsg(f"[StateMachine::error_init_state] [{capture_idx}] ERROR IN TRANSITION. New panel detected ({current_panel}), previous panel was {self.current_test_key}. Switch to get_test_name state. Test panel detected.")
-            # print("[ERROR] --- Paused until input is introduced")
-            # input()
             self.board_metrics_now = {}
             self.current_test_key = None
+            self.last_raw_contour_frame = None
 
             self.current_state = "init"
             return True
         return False
     
-    def init_state(self, original_image, capture_idx, desnormalized_coord_list):
-        current_panel = self.processPanel(original_image, capture_idx, desnormalized_coord_list)
+    def init_state(self, undistorted_image, capture_idx, desnormalized_coord_list):
+        current_panel = self.processPanel(undistorted_image, capture_idx, desnormalized_coord_list)
         if current_panel is not None:
             self.current_test_key = current_panel
             detected_trial = f"{self.current_test_key['color']}_{self.current_test_key['shape']}"
@@ -311,43 +326,53 @@ class StateMachine:
                 self.current_state = "get_test_name"
                 logStateChange(f"[StateMachine::init_state] [{capture_idx}] Switch to get_test_name state. Test panel detected.")
 
-    def get_test_name_state(self, original_image, capture_idx, desnormalized_coord_list):
-        
-        current_panel = self.processPanel(original_image, capture_idx, desnormalized_coord_list)
+    def get_test_name_state(self, undistorted_image, capture_idx, desnormalized_coord_list):
+
+        current_panel = self.processPanel(undistorted_image, capture_idx, desnormalized_coord_list)
         if current_panel is None:
             self.current_state = "test_start_execution"
             logStateChange(f"[StateMachine::get_test_name] [{capture_idx}] Switch to test_start_execution. Gathering data for test {self.current_test_key['shape']} {self.current_test_key['color']} [Block id:{self.block_id}; trial id:{self.trial_id};] (detected arucos: {self.current_test_key['arucos']})")
 
-    def test_start_execution_state(self, original_image, capture_idx, desnormalized_coord_list):
-        if self.is_error_init_state(original_image, capture_idx, desnormalized_coord_list): return
-        
-        self.board_handler.step(original_image)
-        # if self.board_handler.isContourDetected():
-        #     self.board_contour_detected_counter += 1
-        # else:
-        #     self.board_contour_detected_counter = 0
+    def test_start_execution_state(self, undistorted_image, capture_idx, desnormalized_coord_list):
+        if self.is_error_init_state(undistorted_image, capture_idx, desnormalized_coord_list): return
 
-        # # Wait until contour of board can be fully detected 
-        # if self.board_contour_detected_counter > self.board_contour_switch_state_threshold:
-        if self.board_handler.isContourDetected():
+        self.board_handler.step(undistorted_image, self.corners, self.ids)
+
+        # Require a few consecutive raw detections before starting the trial: a single
+        # noisy detection produced degenerate, near-empty trials. init_capture is then
+        # backdated to the first frame of the confirmed streak (see test_execution)
+        if self.board_handler.contour_detected_raw:
+            if self.board_contour_detected_counter == 0:
+                self.contour_streak_start_frame = capture_idx
+            self.board_contour_detected_counter += 1
+        else:
+            self.board_contour_detected_counter = 0
+
+        if self.board_contour_detected_counter >= self.board_contour_start_confirm_threshold:
             self.board_contour_detected_counter = 0
             self.current_state = "test_execution"
             logStateChange(f"[StateMachine::test_start_execution] [{capture_idx}] Switch to test_execution. Gathering data for test {self.current_test_key['shape']} {self.current_test_key['color']} (detected arucos: {self.current_test_key['arucos']})")
             
 
-    def test_execution_state(self, original_image, capture_idx, desnormalized_coord_list):
+    def test_execution_state(self, undistorted_image, capture_idx, desnormalized_coord_list):
         if not 'init_capture' in self.board_metrics_now:
-            self.board_metrics_now['init_capture'] = capture_idx
+            # Backdate the start to the first frame of the confirmed detection streak
+            init_capture = self.contour_streak_start_frame if self.contour_streak_start_frame is not None else capture_idx
+            self.board_metrics_now['init_capture'] = init_capture
+            self.contour_streak_start_frame = None
             self.board_metrics_now['trial_id'] = self.trial_id
             self.board_metrics_now['target_cord'] = list(self.board_handler.getShapeCellIndex(self.current_test_key['shape'], self.current_test_key['color']))
             self.board_metrics_now['target_norm_coord'] = self.board_handler.getPixelBoardNorm(
                                                                 [self.board_handler.getShapeCoord(self.current_test_key['shape'], self.current_test_key['color'])]
                                                             ).tolist()
             self.board_metrics_now['sequence'] = []
-        
-        if self.is_error_init_state(original_image, capture_idx, desnormalized_coord_list): return
+            self.last_raw_contour_frame = capture_idx
 
-        self.board_handler.step(original_image)
+        if self.is_error_init_state(undistorted_image, capture_idx, desnormalized_coord_list): return
+
+        self.board_handler.step(undistorted_image, self.corners, self.ids)
+        if self.board_handler.contour_detected_raw:
+            self.last_raw_contour_frame = capture_idx
         coord_data_list = self.board_handler.getPixelInfo(desnormalized_coord_list)
 
         for coord_data in coord_data_list:
@@ -378,24 +403,63 @@ class StateMachine:
             self.current_state = "test_finish_execution"
             logStateChange(f"[StateMachine::test_execution] [{capture_idx}] Switch to test_finish_execution. Waiting fo new test to start.")
             
-    def test_finish_execution_state(self, original_image, capture_idx, desnormalized_coord_list):
-        
-        self.board_metrics_now['end_capture'] = capture_idx
+    ## Keys of board_metrics that are not color counters
+    METADATA_KEYS = ('init_capture', 'end_capture', 'sequence', 'trial_id', 'status',
+                     'target_cord', 'target_norm_coord', 'transition_error', 'missing_trial_error')
+
+    """
+        Drops gaze samples recorded after end_frame and rebuilds the per color/shape
+        counters, so counters, sequence and duration refer to the same time span.
+    """
+    def trimTrialToFrame(self, metrics, end_frame):
+        if 'sequence' not in metrics:
+            return
+        metrics['sequence'] = [s for s in metrics['sequence'] if s['frame'] <= end_frame]
+        for key in [k for k in metrics.keys() if k not in self.METADATA_KEYS]:
+            del metrics[key]
+        for s in metrics['sequence']:
+            if s['color'] not in metrics:
+                metrics[s['color']] = {s['shape']: {True: 0, False: 0}}
+            if s['shape'] not in metrics[s['color']]:
+                metrics[s['color']][s['shape']] = {True: 0, False: 0}
+            metrics[s['color']][s['shape']][s['slot']] += 1
+
+    def test_finish_execution_state(self, undistorted_image, capture_idx, desnormalized_coord_list):
+
+        # Backdate trial end to the last frame the board was actually visible:
+        # the confirmation counter plus contour inertia otherwise add a systematic
+        # ~5-7 frames (~0.2s) of occlusion time to every trial duration
+        end_capture = self.last_raw_contour_frame if self.last_raw_contour_frame is not None else capture_idx
+        self.board_metrics_now['end_capture'] = end_capture
+        self.trimTrialToFrame(self.board_metrics_now, end_capture)
         self.board_metrics_now['status'] = self.current_state
         self.board_metrics_store[(self.block_id, self.trial_id)] = {f"{self.current_test_key['color']}_{self.current_test_key['shape']}": copy.deepcopy(self.board_metrics_now)}
         self.board_metrics_store['latest'] = self.board_metrics_store[(self.block_id, self.trial_id)]
         self.board_metrics_now = {}
         self.current_test_key = None
+        self.last_raw_contour_frame = None
 
         self.current_state = "init"
-        logStateChange(f"[StateMachine::test_finish_execution::] Switch to init.")
+        logStateChange(f"[StateMachine::test_finish_execution::] Switch to init. Trial end backdated to frame {end_capture} (confirmed at {capture_idx}).")
 
     # If end of video was detected close latest test
     def handle_end_of_video(self):
 
         if self.current_state != "init":
-            self.board_metrics_now['end_capture'] = self.last_frame_number
-            self.board_metrics_store[(self.block_id, self.trial_id)] = {f"end_of_video_error_{self.current_test_key['color']}_{self.current_test_key['shape']}": copy.deepcopy(self.board_metrics_now)}
+            # Backdate to the last frame the board was actually seen, instead of
+            # dragging the trial until the very last frame of the recording
+            end_capture = self.last_raw_contour_frame if self.last_raw_contour_frame is not None else self.last_frame_number
+            self.board_metrics_now['end_capture'] = end_capture
+            self.trimTrialToFrame(self.board_metrics_now, end_capture)
+            if 'init_capture' in self.board_metrics_now:
+                # Trial was running with gathered data: close it as valid with a
+                # distinctive status (the recording may have stopped before the
+                # motor response was completed)
+                self.board_metrics_now['status'] = 'test_finish_by_end_of_video'
+                key = f"{self.current_test_key['color']}_{self.current_test_key['shape']}"
+            else:
+                key = f"end_of_video_error_{self.current_test_key['color']}_{self.current_test_key['shape']}"
+            self.board_metrics_store[(self.block_id, self.trial_id)] = {key: copy.deepcopy(self.board_metrics_now)}
             self.board_metrics_store['latest'] = self.board_metrics_store[(self.block_id, self.trial_id)]
             self.board_metrics_now = {}
             self.current_test_key = None
@@ -422,11 +486,11 @@ class StateMachine:
         self.board_metrics_store = data_store['trials_data']
 
     def store_results(self, output_path, participant_id = "", video_fps = None):
-        
-        self.handle_end_of_video()
-        del self.board_metrics_store['latest']
 
-        data_store = {'video_fps': video_fps, 'participant_id': participant_id, 'frames_info': self.frame_data_store, 'fixations_info': self.fixation_data_store, 'trials_data': self.board_metrics_store}
+        self.handle_end_of_video()
+        self.board_metrics_store.pop('latest', None)
+
+        data_store = {'sw_version': __version__, 'video_fps': video_fps, 'participant_id': participant_id, 'frames_info': self.frame_data_store, 'fixations_info': self.fixation_data_store, 'trials_data': self.board_metrics_store}
         with open(os.path.join(output_path,f'data_{participant_id}.pkl'), 'wb') as f:
             pickle.dump(data_store, f)
         

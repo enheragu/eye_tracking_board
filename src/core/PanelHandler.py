@@ -12,43 +12,40 @@ import cv2.aruco
 import yaml
 from yaml.loader import SafeLoader
 
-from src.utils import projectCenter, interpolate_points, getMaskHue
-from src.ArucoBoardHandler import ArucoBoardHandler
+from src.core.utils import projectCenter, interpolate_points, getMaskHue
+from src.core.ArucoBoardHandler import ArucoBoardHandler
 
 """
     Class that handles the detection, and fixations of the probe panel shown to the participant
     with the target piece to look for
 """
 class PanelHandler:
-    def __init__(self, panel_configuration_path, colors_dict, colors_list, distortion_handler):
-        
+    def __init__(self, panel_configuration_path, colors_dict, colors_list, distortion_handler, enable_visualization = False):
+
         self.distortion_handler = distortion_handler
 
         self.colors_list = colors_list
         self.colors_dict = colors_dict
+        self.enable_visualization = enable_visualization
 
         self.shape_contour = None
         self.last_detected = None
         self.homography = None
+        self.panel_view = None
 
         self.panel_handler_list = self.parseCFGPanelData(panel_configuration_path)
-        
+
         for panel_handler in self.panel_handler_list:
             print(f"[PanelHandler] {panel_handler = }")
 
     def getCurrentPanel(self):
         return self.last_detected
-    
-    def step(self, image, corners, ids):
-        undistorted_image = self.distortion_handler.undistortImage(image)
-        
+
+    def step(self, undistorted_image, corners, ids):
         self.panel_view = self.computeApplyHomography(undistorted_image, corners, ids)
-        # Detects contour of the figure, not doint that for now
-        # self.shape_contour = self.detectContour(self.panel_view)
-        # self.panel_view = undistorted_image
 
     def computeApplyHomography(self, undistorted_image, corners, ids):
-        
+
         self.last_detected = None
         for aruco_handler in self.panel_handler_list:
             homography, self.warp_width, self.warp_height, rotated = aruco_handler.getTransform(undistorted_image, corners, ids)
@@ -57,8 +54,12 @@ class PanelHandler:
                 self.last_detected = {'color': aruco_handler.color, 'shape': aruco_handler.shape, 'arucos': aruco_handler.arucos_detected}
                 break
 
-        display_image = np.zeros((self.warp_width, self.warp_height, 3), dtype=undistorted_image.dtype)
-            
+        # The warped panel view is only needed to be displayed/recorded in debug mode
+        if not self.enable_visualization:
+            return None
+
+        display_image = np.zeros((self.warp_height, self.warp_width, 3), dtype=undistorted_image.dtype)
+
         if self.homography is not None and self.last_detected is not None:
             display_image = cv.warpPerspective(undistorted_image, self.homography, (self.warp_width, self.warp_height))
 
@@ -74,9 +75,12 @@ class PanelHandler:
         for yaml_file in yaml_files:
             shape = yaml_file.split('/')[-1].split('_')[0]
             color = yaml_file.split('/')[-1].split('_')[1].split('.')[0]
-            panel_handler_list.append(ArucoBoardHandler(arucoboard_cfg_path=yaml_file, colors_list=self.colors_list, 
-                                                        color=color, cameraMatrix=self.distortion_handler.cameraMatrix, 
-                                                        distCoeffs=self.distortion_handler.distCoeffs, shape=shape))
+            # estimate_rotation=False: panel orientation is irrelevant (only presence
+            # and identity matter), skipping pose estimation for every panel cfg
+            panel_handler_list.append(ArucoBoardHandler(arucoboard_cfg_path=yaml_file, colors_list=self.colors_list,
+                                                        color=color, cameraMatrix=self.distortion_handler.cameraMatrix,
+                                                        distCoeffs=self.distortion_handler.distCoeffs, shape=shape,
+                                                        estimate_rotation=False))
         return panel_handler_list
             
 

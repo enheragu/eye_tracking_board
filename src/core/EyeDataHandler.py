@@ -4,14 +4,11 @@ import os
 import time
 import bisect
 
-import threading
 import numpy as np
 import pandas as pd
 
-import pickle  
-
-from src.deps.file_methods import load_pldata_file
-from src.utils import log, print_named_dict
+from src.core.deps.file_methods import load_pldata_file
+from src.core.utils import log, print_named_dict
 
 GAZE_CONFIDENCE_THRESHOLD = 0.6
 

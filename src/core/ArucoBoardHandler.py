@@ -3,7 +3,6 @@
 # encoding: utf-8
 
 import math
-import copy
 
 import cv2 as cv
 import numpy as np
@@ -12,56 +11,24 @@ from scipy.spatial import distance as dist
 import yaml
 from yaml.loader import SafeLoader
 
-from src.utils import projectCenter
-from src.utils import log
+from src.core.utils import projectCenter
+from src.core.utils import log
 
 """
-    Based on aruco markers detected, take white pixels and average the color correction
+    Gray-world chromatic correction in LAB space, weighted by luminance.
+    Stats are computed over a subsampled image (identical result, 16x cheaper).
 """
 def ARUCOColorCorrection(input_img):
     result = cv.cvtColor(input_img, cv.COLOR_BGR2LAB)
-    avg_a = np.average(result[:, :, 1])
-    avg_b = np.average(result[:, :, 2])
-    result[:, :, 1] = result[:, :, 1] - ((avg_a - 128) * (result[:, :, 0] / 255.0) * 1.1)
-    result[:, :, 2] = result[:, :, 2] - ((avg_b - 128) * (result[:, :, 0] / 255.0) * 1.1)
-    result = cv.cvtColor(result, cv.COLOR_LAB2BGR)
-    return result
-
-
-    aruco_dictionary = cv.aruco.getPredefinedDictionary(cv.aruco.DICT_ARUCO_ORIGINAL)
-    corners, ids, rejectedImgPoints = cv.aruco.detectMarkers(input_img, aruco_dictionary)
-
-    if ids is None:
-        return input_img
-    
-    white_pixels = []
-    for index, id in enumerate(ids):
-        corner = corners[index][0]
-        mask = np.zeros(input_img.shape[:2], dtype=np.uint8)
-        cv.fillConvexPoly(mask, np.int32(corner), 255)
-        white_pixels.append(input_img[mask == 255])
-
-    white_pixels = np.concatenate(white_pixels, axis=0)
-    average_white = np.mean(white_pixels, axis=0)
-
-    # Takes all aruco, set tone to be average grey as if aruco had same white and black pixels...
-    corrected_image = input_img*((255.0/2)/average_white)
-    corrected_image = np.clip(corrected_image,0,255).astype(np.uint8)
-
-    ## Noise reduction
-    corrected_image = cv.bilateralFilter(corrected_image, d=9, sigmaColor=75, sigmaSpace=75)
-
-    ## Adjust brightness
-    gray = cv.cvtColor(corrected_image, cv.COLOR_BGR2GRAY)
-    current_brightness = np.mean(gray)
-    current_contrast = np.std(gray)
-    expected_brightness = 190
-    expected_contrast = 70
-    alpha = expected_contrast/current_contrast # Contrast (more contrast alpha>1)
-    beta = expected_brightness - current_brightness # brightness
-    corrected_image = cv.convertScaleAbs(corrected_image, alpha=alpha, beta=beta)
-
-    return corrected_image
+    subsampled = result[::4, ::4]
+    avg_a = np.average(subsampled[:, :, 1])
+    avg_b = np.average(subsampled[:, :, 2])
+    luma_weight = (result[:, :, 0].astype(np.float32) / 255.0) * 1.1
+    a_corrected = result[:, :, 1].astype(np.float32) - (avg_a - 128) * luma_weight
+    b_corrected = result[:, :, 2].astype(np.float32) - (avg_b - 128) * luma_weight
+    result[:, :, 1] = np.clip(a_corrected, 0, 255).astype(np.uint8)
+    result[:, :, 2] = np.clip(b_corrected, 0, 255).astype(np.uint8)
+    return cv.cvtColor(result, cv.COLOR_LAB2BGR)
 
 
 def rotate_points_180_around_center(points, board_center):
@@ -75,28 +42,25 @@ def rotate_points_180_around_center(points, board_center):
 
     return rotated_points
 
-def detectAllArucos(undistorted_frame, aruco_dictionary = cv.aruco.getPredefinedDictionary(cv.aruco.DICT_ARUCO_ORIGINAL)):
+## Detector configuration built once (it was being rebuilt on every call)
+ARUCO_DICTIONARY = cv.aruco.getPredefinedDictionary(cv.aruco.DICT_ARUCO_ORIGINAL)
+ARUCO_PARAMS = cv.aruco.DetectorParameters()
+ARUCO_PARAMS.adaptiveThreshWinSizeMin = 5
+ARUCO_PARAMS.adaptiveThreshWinSizeMax = 15
+ARUCO_PARAMS.adaptiveThreshConstant = 7
+ARUCO_PARAMS.minMarkerPerimeterRate = 0.05
+ARUCO_PARAMS.maxMarkerPerimeterRate = 4.0
+# Subpixel refinement is already performed by the detector itself; the manual
+# cornerSubPix pass that was applied afterwards was redundant
+ARUCO_PARAMS.cornerRefinementMethod = cv.aruco.CORNER_REFINE_SUBPIX
+
+def detectAllArucos(undistorted_frame, aruco_dictionary = ARUCO_DICTIONARY):
     gray_image = cv.cvtColor(undistorted_frame, cv.COLOR_BGR2GRAY)  # transforms to gray level
-    
-    arucoParams = cv.aruco.DetectorParameters()
-    arucoParams.adaptiveThreshWinSizeMin = 5
-    arucoParams.adaptiveThreshWinSizeMax = 15
-    arucoParams.adaptiveThreshConstant = 7
-    arucoParams.minMarkerPerimeterRate = 0.05
-    arucoParams.maxMarkerPerimeterRate = 4.0
-    arucoParams.cornerRefinementMethod = cv.aruco.CORNER_REFINE_SUBPIX
-    corners, ids, rejectedImgPoints = cv.aruco.detectMarkers(gray_image, aruco_dictionary, parameters=arucoParams)
-    # cv.aruco.drawDetectedMarkers(image=undistorted_frame, corners=corners, ids=ids, borderColor=(255,0,255))
-    # cv.aruco.drawDetectedMarkers(image=gray_image, corners=corners, ids=ids, borderColor=(255,0,255))
-
-    criteria = (cv.TERM_CRITERIA_EPS + cv.TERM_CRITERIA_MAX_ITER, 30, 0.001)
-    for corner in corners:
-        cv.cornerSubPix(gray_image, corner, winSize=(5, 5), zeroZone=(-1, -1), criteria=criteria)
-
+    corners, ids, rejectedImgPoints = cv.aruco.detectMarkers(gray_image, aruco_dictionary, parameters=ARUCO_PARAMS)
     return corners, ids
 
 class ArucoBoardHandler:
-    def __init__(self, arucoboard_cfg_path, colors_list, color, cameraMatrix = None, distCoeffs = None, shape = ''):
+    def __init__(self, arucoboard_cfg_path, colors_list, color, cameraMatrix = None, distCoeffs = None, shape = '', estimate_rotation = True):
 
         self.colors_list = colors_list
         self.color = color
@@ -107,7 +71,16 @@ class ArucoBoardHandler:
         self.distCoeffs = distCoeffs
 
         self.aruco_config, self.board_poinst_3d, self.board_poinst_3d_rotated, self.aruco_side = self.parseCFGPanelData(arucoboard_cfg_path)
-        
+        self.config_by_id = {int(cfg['id']): cfg for cfg in self.aruco_config}
+        self.config_ids = set(self.config_by_id.keys())
+
+        ## 180 degree rotation state. Pose estimation is only needed for the game
+        # board (the cell map flips with it); panels skip it (estimate_rotation=False)
+        self.estimate_rotation = estimate_rotation
+        self.rotated_state = False
+        self.rotation_flip_counter = 0
+        self.rotation_flip_threshold = 3
+
     def __repr__(self):
         str_format = f"ArucoBoardHandler ({self.color} - {self.shape}): ["
         for aruco_config_item in self.aruco_config:
@@ -155,52 +128,74 @@ class ArucoBoardHandler:
 
 
     def processArucos(self, corners, ids):
-        rotated_arucos = 0
         detected_arucos_list = []
         self.arucos_detected = []
         extra_aruco_list = []
 
         if ids is None:
-            return [], False, []
-    
-        for index, id in enumerate(ids):
-            for aruco_data in self.aruco_config:
-                current_data = copy.deepcopy(aruco_data)
-                current_data.update({'points_image': corners[index][0]})
-                if id == aruco_data['id']:
-                    detected_arucos_list.append(current_data)
-                    self.arucos_detected.append(aruco_data['id'])
-                    break
-                else:
-                    extra_aruco_list.append(current_data)
+            return [], self.rotated_state, []
 
-        rvecs, tvecs, _ = cv.aruco.estimatePoseSingleMarkers(corners, self.aruco_side, self.cameraMatrix, self.distCoeffs)
-        ## Check rotation matrix, if is around 180 the board needs rotation :)
-        
-        for i, rvec in enumerate(rvecs):
+        matched_corners = []
+        for index, marker_id in enumerate(np.asarray(ids).flatten()):
+            marker_id = int(marker_id)
+            aruco_data = self.config_by_id.get(marker_id)
+            if aruco_data is not None:
+                current_data = dict(aruco_data)  # shallow copy, only points_image is added
+                current_data['points_image'] = corners[index][0]
+                detected_arucos_list.append(current_data)
+                self.arucos_detected.append(marker_id)
+                matched_corners.append(corners[index])
+            else:
+                extra_aruco_list.append({'id': marker_id, 'points_image': corners[index][0]})
+
+        need_rotation = self.checkRotation(matched_corners)
+        return detected_arucos_list, need_rotation, extra_aruco_list
+
+    """
+        Decides if the board is seen rotated 180 degrees. Only this handler's own
+        markers vote (foreign markers in the frame used to pollute the count), and
+        the decision has hysteresis: physically the board cannot flip mid trial.
+    """
+    def checkRotation(self, matched_corners):
+        if not self.estimate_rotation or not matched_corners:
+            return self.rotated_state
+
+        rvecs, tvecs, _ = cv.aruco.estimatePoseSingleMarkers(matched_corners, self.aruco_side, self.cameraMatrix, self.distCoeffs)
+        rotated_count = 0
+        for rvec in rvecs:
             R, _ = cv.Rodrigues(rvec)  # Rotation matrix
             yaw = np.arctan2(R[1, 0], R[0, 0])
             if abs(yaw) > np.pi / 2:
-                rotated_arucos += 1
-        
-        if rotated_arucos >= len(self.aruco_config)*0.5:
-            # log(f"Need rotation! {rotated_arucos} out of {len(detected_aruco_list)}")
-            need_rotation = True
+                rotated_count += 1
+
+        majority_rotated = rotated_count > len(matched_corners) / 2.0
+        if majority_rotated != self.rotated_state:
+            self.rotation_flip_counter += 1
+            if self.rotation_flip_counter >= self.rotation_flip_threshold:
+                self.rotated_state = majority_rotated
+                self.rotation_flip_counter = 0
         else:
-            need_rotation = False
-            
-        return detected_arucos_list, need_rotation, extra_aruco_list
+            self.rotation_flip_counter = 0
+
+        return self.rotated_state
 
     def getTransform(self, undistorted_frame, corners, ids):
 
-        # cv.imshow('getTransform::undistorted_frame', undistorted_frame)
         homography = None
         _, (warp_width, warp_height) = rescale_3d_points(self.board_poinst_3d, undistorted_frame.shape)
-        detected_aruco_list, rotated, _ = self.processArucos(corners, ids)
 
         # Should detect all arucos?
         # Problem with board -> detect at least 50% of configured arucos
         aruco_detected_min = max(1, len(self.aruco_config)*0.49)
+
+        # Cheap early exit on the detected id set, before any matching/pose work.
+        # With 10+ panel configurations checked per frame this skips almost all work
+        if ids is None or len(self.config_ids.intersection(np.asarray(ids).flatten().astype(int).tolist())) < aruco_detected_min:
+            self.arucos_detected = []
+            return None, int(warp_width), int(warp_height), self.rotated_state
+
+        detected_aruco_list, rotated, _ = self.processArucos(corners, ids)
+
         if len(detected_aruco_list) >= aruco_detected_min:
             aruco_corners_image = np.array([detected_aruco['points_image'] for detected_aruco in detected_aruco_list])
 
@@ -318,9 +313,10 @@ def rescale_3d_points(points, img_shape):
 
     min_coord = np.min(points, axis=0)
     max_coord = np.max(points, axis=0)
-    
-    scale_x = img_shape[0] / (max_coord[0] - min_coord[0])
-    scale_y = img_shape[1] / (max_coord[1] - min_coord[1])
+
+    # img_shape is (rows, cols): index 1 is the X dimension and 0 the Y one
+    scale_x = img_shape[1] / (max_coord[0] - min_coord[0])
+    scale_y = img_shape[0] / (max_coord[1] - min_coord[1])
     
     # Scale with min to maintain square shapes as such
     scale = min(scale_x, scale_y)

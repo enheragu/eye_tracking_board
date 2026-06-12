@@ -7,16 +7,20 @@
 """
 
 import os
+import sys
 
 import cv2 as cv
 import numpy as np
 from tqdm import tqdm
 
-# from src.EyeDataHandler import EyeDataHandlerCSV as EyeDataHandler
-from src.EyeDataHandler import EyeDataHandlerPLDATA as EyeDataHandler
-import process_video
-# from src.ThreadVideoStream import ThreadVideoCapture, ThreadVideoWriter
-from src.utils import log
+# Tools live in tools/, make the repo root importable (src package, entry points)
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+
+# from src.core.EyeDataHandler import EyeDataHandlerCSV as EyeDataHandler
+from src.core.EyeDataHandler import EyeDataHandlerPLDATA as EyeDataHandler
+from src import process_video
+# from src.core.ThreadVideoStream import ThreadVideoCapture, ThreadVideoWriter
+from src.core.utils import log
 
 data_path = process_video.participant_path
 # data_path = os.path.join(process_video.participant_path,'exports', '000')

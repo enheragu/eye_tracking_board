@@ -9,7 +9,7 @@ board_config:
   '2,0': ['yellow', 'circle', True]
   '3,0': ['blue', 'trapezoid', True]
   '4,0': ['green', 'triangle', False]
-  '5,0': ['red', 'hexagon', False]
+  '5,0': ['red', 'hexagon', True]
   '6,0': ['blue', 'square', True]
   '7,0': ['red', 'circle', False]
 

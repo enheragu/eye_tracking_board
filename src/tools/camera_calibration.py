@@ -5,14 +5,19 @@
 import cv2 as cv
 import numpy as np
 import os
+import sys
 import json
 from multiprocessing import Pool
 from tqdm import tqdm
 
-from src.utils import log
+# Tools live in tools/, make the repo root importable (src package, entry points)
+REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+sys.path.insert(0, REPO_ROOT)
+
+from src.core.utils import log
 
 # Calibrate camera with stored image files (calibration pattern)
-calibration_video_path = './calibration.mp4'
+calibration_video_path = os.path.join(REPO_ROOT, 'calibration/calibration.mp4')
 # Calibration doe snot process all frames from video but from step to step :)
 step = 10
 
@@ -111,7 +116,7 @@ if __name__ == "__main__":
         log('distortion_coefficients:', distCoeffs)
         
         # store calibration data in a JSON file
-        with open('camera_calib.json', 'w') as file:
+        with open(os.path.join(REPO_ROOT, 'calibration/camera_calib.json'), 'w') as file:
             json.dump({'camera_matrix': cameraMatrix.tolist(),
                     'distortion_coefficients': distCoeffs.tolist()}, file)
             

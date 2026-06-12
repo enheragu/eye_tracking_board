@@ -1,10 +1,16 @@
 import os
+import sys
 from pathlib import Path
-from src.utils import parseYaml
 
-CURRENT_FILE_PATH = os.path.dirname(os.path.abspath(__file__))
-base_path = Path(f"{CURRENT_FILE_PATH}/output/gaze")
-trial_config_path = Path(f"{CURRENT_FILE_PATH}/cfg/default_trials_config.yaml")
+# Tools live in tools/, make the repo root importable (src package, entry points)
+REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+sys.path.insert(0, REPO_ROOT)
+
+from src.core.utils import parseYaml
+
+DEFAULT_OUTPUT_ROOT = os.environ.get('EEHA_OUTPUT_ROOT', '/media/quique/EXTERNAL_USB1/BusquedaVisualAnalysis/OutputData')
+base_path = Path(DEFAULT_OUTPUT_ROOT) / "gaze"
+trial_config_path = Path(REPO_ROOT) / "cfg/default_trials_config.yaml"
 expected_files = [
     'data_{}.pkl',
     'trials_data_{}.csv',
