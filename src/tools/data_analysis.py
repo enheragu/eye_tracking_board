@@ -10,10 +10,11 @@ from matplotlib.colors import LinearSegmentedColormap
 from multiprocessing import Pool, cpu_count
 from PIL import Image
 from tqdm import tqdm
+from src.core.version import __version__
 
 # Configuración global
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-DEFAULT_OUTPUT_ROOT = os.environ.get('EEHA_OUTPUT_ROOT', '/media/quique/EXTERNAL_USB1/BusquedaVisualAnalysis/OutputData')
+DEFAULT_OUTPUT_ROOT = os.environ.get('EEHA_OUTPUT_ROOT', f'/media/quique/EXTERNAL_USB1/BusquedaVisualAnalysis/OutputData_v{__version__}')
 CACHE_FILE = os.path.join(DEFAULT_OUTPUT_ROOT, 'plots/data_cache.pkl')
 HASH_FILE = os.path.join(DEFAULT_OUTPUT_ROOT, 'plots/data_hash.txt')
 

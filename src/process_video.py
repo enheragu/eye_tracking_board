@@ -30,7 +30,7 @@ from src.core.ThreadVideoStream import ThreadVideoWriter
 # stored next to it so the (limited) local disk is not filled with video data.
 # Both can be overridden through CLI arguments or these environment variables
 DEFAULT_DATA_ROOT = os.environ.get('EEHA_DATA_ROOT', '/media/quique/EXTERNAL_USB1/BusquedaVisualAnalysis/InputData')
-DEFAULT_OUTPUT_ROOT = os.environ.get('EEHA_OUTPUT_ROOT', '/media/quique/EXTERNAL_USB1/BusquedaVisualAnalysis/OutputData')
+DEFAULT_OUTPUT_ROOT = os.environ.get('EEHA_OUTPUT_ROOT', f'/media/quique/EXTERNAL_USB1/BusquedaVisualAnalysis/OutputData_v{__version__}')
 
 # Hue in degrees (0-360); epsilon in degrees too
 colors_dict = {'red':    {'h': 350, 'eps': 29},
@@ -49,6 +49,9 @@ parser.add_argument('-s', '--slow_analysis', action='store_true', default=False,
 parser.add_argument('--data_root', type=str, default=DEFAULT_DATA_ROOT, help='Root folder containing one folder per participant.')
 parser.add_argument('--output_root', type=str, default=DEFAULT_OUTPUT_ROOT, help='Root folder in which output data is stored.')
 parser.add_argument('--debug_log', action='store_true', default=False, help='Enable high frequency (per gaze sample) terminal logging.')
+parser.add_argument('--start_frame', type=int, default=0, help='First frame to process (for debugging a specific segment).')
+parser.add_argument('--end_frame', type=int, default=None, help='Last frame to process (for debugging a specific segment).')
+parser.add_argument('--no_window', action='store_true', default=False, help='With -v, record the debug video without opening a window (headless).')
 args = parser.parse_args()
 
 participant_id = args.participant
@@ -103,7 +106,7 @@ def mouse_callback(event, x, y, flags, param):
     if event == cv.EVENT_LBUTTONDOWN and mouse_callback_image is None:
         log(f'No image provided to detect HSV components.')
 
-if enable_visualization:
+if enable_visualization and not args.no_window:
     cv.namedWindow(WINDOW_STREAM_BOARD, cv.WINDOW_AUTOSIZE)
     cv.setMouseCallback(WINDOW_STREAM_BOARD, mouse_callback)
 
@@ -149,13 +152,14 @@ def processVideo(video_path):
     state_machine_handler = StateMachine(board_handler, panel_handler, eye_data_handler, distortion_handler,
                                          sequence_cfg_path = trial_blocks_cfg, video_fps=fps, slow_analysis=slow_analysis)
 
-    capture_idx = init_capture_idx
+    capture_idx = args.start_frame
+    end_limit = total_frames if args.end_frame is None else min(total_frames, args.end_frame + 1)
     if capture_idx > 0:
         # Single seek to the start point; from here on decoding is sequential
         stream.set(cv.CAP_PROP_POS_FRAMES, capture_idx)
 
-    with tqdm(total=total_frames, desc=f"Frames from {participant_id}", initial=capture_idx) as pbar:
-        while capture_idx < total_frames:
+    with tqdm(total=end_limit, desc=f"Frames from {participant_id}", initial=capture_idx) as pbar:
+        while capture_idx < end_limit:
             ret, original_image = stream.read()
             if not ret or original_image is None:
                 log(f"[processVideo::{participant_id}] Can't receive frame (stream end?). Exiting ...")
@@ -165,7 +169,7 @@ def processVideo(video_path):
             try:
                 state_machine_handler.step(original_image, capture_idx)
             except ExceptionNoMoreBlocks:
-                print(f"End of execution")
+                log(f"[processVideo::{participant_id}] End of execution (no more blocks in sequence).")
                 break
 
             if enable_visualization:
@@ -173,13 +177,13 @@ def processVideo(video_path):
                                                                         last_capture_idx=total_frames, frame_width=frame_width,
                                                                         frame_height=frame_height, participan_id=participant_id)
                 mouse_callback_image = mosaic
-                cv.imshow(WINDOW_STREAM_BOARD, mosaic)
                 writer.write(log_frame)
-
-            # check keystroke to exit (image window must be on focus)
-            key = cv.pollKey()
-            if key == ord('q') or key == ord('Q') or key == 27:
-                break
+                # --no_window only records the debug video (works headless)
+                if not args.no_window:
+                    cv.imshow(WINDOW_STREAM_BOARD, mosaic)
+                    key = cv.pollKey()
+                    if key == ord('q') or key == ord('Q') or key == 27:
+                        break
 
             capture_increment = frame_speed_multiplier*state_machine_handler.getFrameMultiplier()
             # Skip intermediate frames with grab(): decodes but skips the costly

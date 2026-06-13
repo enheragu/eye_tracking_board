@@ -12,18 +12,19 @@
 
 The task consists on finding one of the following targets, that are shown to the participant in a panel in the board below.
 
-<div align="center"><figure>
-  <img src="./docs/media/TableroSinBordes.png" width="40%" />
-  <figcaption>Figure 1. Rendered image of the board with the different pieces on it.</figcaption>
-</figure></div>
+<!-- GitHub strips style attributes (flex layouts do not render): use aligned
+     paragraphs with percentage widths, which GitHub does support -->
+<p align="center">
+  <img src="./docs/media/TableroSinBordes.png" width="55%" alt="Rendered image of the board with the different pieces on it" />
+</p>
+<p align="center"><em>Figure 1. Rendered image of the board with the different pieces on it.</em></p>
 
-<div align="center"><figure>
-<div style="display: flex; gap: 30px;">
-  <img src="./docs/media/documentation/targets_carousel.gif" width="30%" />
-  <img src="./docs/media/documentation/targets_carousel_2.gif" width="30%" />
-  <img src="./docs/media/documentation/targets_carousel_3.gif" width="30%" />
-</div>  <figcaption>Figure 2. Panels with target to look for that is shown to the participants.</figcaption>
-</figure></div>
+<p align="center">
+  <img src="./docs/media/documentation/targets_carousel.gif" width="30%" alt="Sample panels carousel 1" />&nbsp;
+  <img src="./docs/media/documentation/targets_carousel_2.gif" width="30%" alt="Sample panels carousel 2" />&nbsp;
+  <img src="./docs/media/documentation/targets_carousel_3.gif" width="30%" alt="Sample panels carousel 3" />
+</p>
+<p align="center"><em>Figure 2. Panels with the target to look for that are shown to the participants.</em></p>
 
 The whole experiment is composed by six blocks of ten trials each.
 
@@ -40,6 +41,31 @@ The whole experiment is composed by six blocks of ten trials each.
 
 
 ## Code description
+
+The software processes the Pupil Labs recordings (world video + gaze) and
+reconstructs, for each trial, which board cell the participant was looking at and
+for how long. Documentation (Spanish):
+
+- **[Processing guide](docs/guia_procesamiento.md)** — user-facing: what the outputs mean
+  and how to interpret them.
+- **[Technical documentation](docs/documentacion_tecnica.md)** — how it works inside (board
+  localization/homography, contour detection, touch detector, state machine, measured
+  engineering findings).
+
+Version history is in the [CHANGELOG](CHANGELOG.md).
+
+Repository layout:
+
+| Path | Content |
+|---|---|
+| `src/process_video.py` | Main entry point: processes one participant. |
+| `src/run_all.py` | Batch entry point: processes several participants in parallel. |
+| `src/core/` | Pipeline library (board/panel/eye-data handlers, state machine...). |
+| `src/tools/` | Auxiliary tools: output checks, plots, output comparison between versions, camera calibration. |
+| `cfg/` | Board, ArUco, sample-panel and trial-sequence configuration. |
+| `calibration/` | Camera calibration data (`camera_calib.json`). |
+| `scripts/` | Shell wrappers. |
+| `docs/` | Processing guide and media assets. |
 
 ## Installation And Usage
 
@@ -58,7 +84,23 @@ The environment can be deactivated as follows:
 Clone the repository in a given location and install its requirementes with the following command, executed from the root folder of the repository. You can check the requirements file to check the libraries that will be installed into your system.
 
 ```sh
-    pip3 install -r requirements
+    pip3 install -r requirements.txt
+```
+
+Input and output locations default to an external data drive and can be overridden
+with `--data_root`/`--output_root` (or the `EEHA_DATA_ROOT`/`EEHA_OUTPUT_ROOT`
+environment variables). Outputs are stored under `OutputData_v<version>/<topic>/<id>/`
+so results of different software versions never mix.
+
+```sh
+    # One participant (debug visualization with -v)
+    python3 src/process_video.py -p 002 -t gaze --slow_analysis
+
+    # All participants found in the data root, in parallel
+    python3 src/run_all.py
+
+    # Compare the outputs of two software versions at a glance
+    python3 src/tools/compare_outputs.py --old <old_output_root> --new <new_output_root>
 ```
 
 

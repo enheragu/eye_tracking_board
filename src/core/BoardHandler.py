@@ -3,6 +3,7 @@
 # encoding: utf-8
 
 import math
+from collections import deque
 
 import cv2 as cv
 import numpy as np
@@ -46,10 +47,14 @@ class BoardHandler:
         self.colors_dict = colors_dict
         self.colors_list = colors_list
         self.color = self.colors_list['board']
-        self.aruco_board_handler = ArucoBoardHandler(arucoboard_cfg_path=aruco_board_cfg_path, color='board', 
-                                                     colors_list=self.colors_list, 
-                                                     cameraMatrix=self.distortion_handler.cameraMatrix, 
-                                                     distCoeffs=self.distortion_handler.distCoeffs)
+        # min_markers=4: enough for a stable homography (4 markers = 16 corner
+        # points well spread) while tolerating the hand covering several markers
+        # during the grab, down from the previous ~5 of 10
+        self.aruco_board_handler = ArucoBoardHandler(arucoboard_cfg_path=aruco_board_cfg_path, color='board',
+                                                     colors_list=self.colors_list,
+                                                     cameraMatrix=self.distortion_handler.cameraMatrix,
+                                                     distCoeffs=self.distortion_handler.distCoeffs,
+                                                     min_markers=4)
         self.board_size, self.board_size_mm, self.board_data_dict_upright, self.board_data_dict_rotated = self.parseCFGBoardData(game_cfg_path)
         self.board_data_dict = self.board_data_dict_upright
 
@@ -81,6 +86,39 @@ class BoardHandler:
         self.prev_board_contour = None
         self.board_contour_inertia_step = 2
         self.board_contour_intertia_counter = 0
+
+        ## Session reference of the board position inside the warped view. The warp
+        # is built from the aruco layout, so the border rectangle lands in the same
+        # warp coordinates the whole session: the median of past detections allows
+        # assigning gaze to cells when the homography is valid but the full border
+        # is not detectable (panel removal window, partial occlusions)
+        self.reference_rect_history = deque(maxlen=25)
+        self.reference_board_rect = None
+        self.grid_from_reference = False
+
+        ## Target area occlusion tracking (trial end detection). Temporal change
+        # detection against a reference patch captured at trial start: works whatever
+        # the hand/sleeve color is, and the relief/shadows of the 3D pieces are baked
+        # into the reference (their variation is global and discounted by the control
+        # cells). Double-margin: the target patch is split into its white pixels
+        # (gutters/borders) and its colored pixels, and occlusion is confirmed only
+        # when BOTH change (min of the two), so a partial shadow on one does not fire.
+        self.target_cell = None
+        self.control_cells = []
+        self.tracking_ref_patches = None
+        self.tracking_ref_masks = None  # (white_mask, color_mask) per patch
+        self.tracking_ref_hists = None  # colour histogram per patch
+        self.last_target_roi = None     # for visualization
+        self.last_control_rois = []
+        self.occlusion_patch_size = (48, 48)  # finer patch for the alignment step
+        self.occlusion_pixel_diff_threshold = 60  # sum of |diff| over the 3 channels
+        self.occlusion_roi_cells = 1.4  # ROI side in cells (tight enough for signal)
+        self.occlusion_min_zone_fraction = 0.10  # ignore white/color zone if scarcer
+        self.occlusion_max_align_shift = 10  # max px shift compensated (warp jitter)
+        # Colour-composition gate: a real hand brings a new colour into the ROI, a mere
+        # shift does not. Occlusion is only confirmed if the colour histogram also
+        # departs from the reference by at least this (Bhattacharyya distance).
+        self.occlusion_hist_threshold = 0.30
         
         
     def step(self, undistorted_image, corners, ids):
@@ -103,7 +141,26 @@ class BoardHandler:
 
         
         self.cell_matrix, self.cell_width, self.cell_height = None, None, None
-        if self.board_contour is not None and len(self.board_contour) != 0:
+        self.grid_from_reference = False
+
+        # Accumulate the detected border rectangle to build a stable session grid
+        if self.board_contour is not None and len(self.board_contour) != 0 and self.contour_detected_raw:
+            self.reference_rect_history.append(cv.boundingRect(self.board_contour))
+            self.reference_board_rect = tuple(np.median(np.array(self.reference_rect_history), axis=0))
+
+        # The grid is taken from the MEDIAN border rectangle, not the per-frame one.
+        # In the warped view the homography already aligns the board every frame, so
+        # the detected contour only jitters by detection noise; the median is the true
+        # stable position with no lag. This keeps the grid steady (no flicker) AND
+        # keeps the touch-detector ROI aligned with the board content (a per-frame grid
+        # made the ROI drift over the board and faked occlusions). The per-frame
+        # contour is only used at the very start, before enough history is gathered.
+        if self.reference_board_rect is not None and len(self.reference_rect_history) >= 5 and self.homography is not None:
+            x, y, w, h = self.reference_board_rect
+            self.cell_matrix, self.cell_width, self.cell_height = self.computeBoardMatrixFromRect(x, y, w, h, self.board_size)
+            self.board_data_dict = self.completeBoardConfig(self.cell_matrix, self.cell_width, self.cell_height, self.board_data_dict)
+            self.grid_from_reference = self.board_contour is None
+        elif self.board_contour is not None and len(self.board_contour) != 0:
             self.cell_matrix, self.cell_width, self.cell_height = self.computeBoardMatrixFromContour(self.board_contour, self.board_size)
             self.board_data_dict = self.completeBoardConfig(self.cell_matrix, self.cell_width, self.cell_height, self.board_data_dict)
         
@@ -236,7 +293,7 @@ class BoardHandler:
     def getPixelInfo(self, coordinates_list):
         self.fixation_coord_list = []
         coord_info_list = []
-        if coordinates_list and self.board_contour is not None and len(self.board_contour) != 0 \
+        if coordinates_list and self.cell_matrix is not None \
             and self.board_data_dict is not None:
             log_debug(f"[BoardHandler::getPixelInfo] Check {len(coordinates_list)} fixation for this frame.")
 
@@ -314,7 +371,9 @@ class BoardHandler:
     
     def computeBoardMatrixFromContour(self, board_contour, board_size):
         x, y, w, h = cv.boundingRect(board_contour)
+        return self.computeBoardMatrixFromRect(x, y, w, h, board_size)
 
+    def computeBoardMatrixFromRect(self, x, y, w, h, board_size):
         # Float cell sizes: integer division accumulated a remainder of up to
         # board_size-1 px at the right/bottom edges, misclassifying gaze samples
         # on the last cells as not_board
@@ -454,6 +513,185 @@ class BoardHandler:
     
     def isContourDetected(self):
         return True if self.board_contour is not None else False
+
+    """
+        A cell-sized patch with (almost) no saturated nor dark pixels means a blank
+        white surface (the sample panel) is covering the board at that point: every
+        real cell shows either a colored piece or a colored slot outline
+    """
+    def isRegionBlank(self, corrected_coord, saturation_threshold=60, dark_threshold=110, blank_fraction=0.97):
+        if self.board_view is None or self.cell_width is None:
+            return False
+        x, y = int(corrected_coord[0][0]), int(corrected_coord[0][1])
+        half_w, half_h = int(self.cell_width/2), int(self.cell_height/2)
+        x0, x1 = max(0, x-half_w), min(self.board_view.shape[1], x+half_w)
+        y0, y1 = max(0, y-half_h), min(self.board_view.shape[0], y+half_h)
+        if x1 <= x0 or y1 <= y0:
+            return True
+        patch = cv.cvtColor(self.board_view[y0:y1, x0:x1], cv.COLOR_BGR2HSV_FULL)
+        non_blank = np.logical_or(patch[:,:,1] > saturation_threshold, patch[:,:,2] < dark_threshold)
+        return (1.0 - np.count_nonzero(non_blank)/non_blank.size) >= blank_fraction
+
+    ## TARGET AREA OCCLUSION TRACKING (trial end detection)
+
+    """
+        True when the target cell is NOT covered by a blank white surface, i.e. the
+        sample panel cardboard is no longer sweeping over it. Used to delay the start
+        of the touch tracking until the scene has settled after the panel removal.
+    """
+    def isTargetAreaClear(self, target_cell):
+        if self.cell_matrix is None or target_cell is None or target_cell[0] is None:
+            return False
+        row, col = int(target_cell[0]), int(target_cell[1])
+        if not (0 <= row < self.cell_matrix.shape[0] and 0 <= col < self.cell_matrix.shape[1]):
+            return False
+        cx, cy = self.cell_matrix[row][col]
+        return not self.isRegionBlank([[cx, cy]])
+
+    def _clampRoi(self, cx, cy, w, h):
+        if self.board_view is None:
+            return None
+        x0, y0 = int(max(0, cx - w/2)), int(max(0, cy - h/2))
+        x1 = int(min(self.board_view.shape[1], cx + w/2))
+        y1 = int(min(self.board_view.shape[0], cy + h/2))
+        if x1 <= x0 or y1 <= y0:
+            return None
+        return (x0, y0, x1, y1)
+
+    def _extractPatch(self, roi):
+        x0, y0, x1, y1 = roi
+        patch = cv.resize(self.board_view[y0:y1, x0:x1], self.occlusion_patch_size, interpolation=cv.INTER_AREA)
+        return cv.GaussianBlur(patch, (3, 3), 0).astype(np.float32)
+
+    """
+        Starts tracking the appearance of the target cell neighbourhood (target cell
+        expanded half a cell on each side). Control cells are spread positions far
+        from the target whose median change estimates the global variation. The
+        reference patches are captured on the first getTargetOcclusionMeasure call.
+    """
+    def initTargetTracking(self, target_cell):
+        self.clearTargetTracking()
+        if target_cell is None or target_cell[0] is None or self.cell_matrix is None:
+            return
+        self.target_cell = (int(target_cell[0]), int(target_cell[1]))
+        rows, cols = self.board_size[1], self.board_size[0]
+        candidates = [(0, 0), (0, cols-1), (rows-1, 0), (rows-1, cols-1), (rows//2, cols//2)]
+        candidates.sort(key=lambda c: -(abs(c[0]-self.target_cell[0]) + abs(c[1]-self.target_cell[1])))
+        self.control_cells = candidates[:3]
+
+    def clearTargetTracking(self):
+        self.target_cell = None
+        self.control_cells = []
+        self.tracking_ref_patches = None
+        self.tracking_ref_masks = None
+        self.tracking_ref_hists = None
+        self.last_target_roi = None
+        self.last_control_rois = []
+
+    def _cellRoi(self, cell):
+        row, col = cell
+        cx, cy = self.cell_matrix[row][col]
+        return self._clampRoi(cx, cy, self.cell_width*self.occlusion_roi_cells,
+                              self.cell_height*self.occlusion_roi_cells)
+
+    """
+        Splits a reference patch into its white (gutters/borders/blank) and colored
+        pixels. Thresholds calibrated on the real warped board view, not the print
+        render. Used only on the clean reference, so relief/lighting do not affect it.
+    """
+    def _segmentPatch(self, patch_bgr):
+        hsv = cv.cvtColor(np.clip(patch_bgr, 0, 255).astype(np.uint8), cv.COLOR_BGR2HSV_FULL)
+        sat, val = hsv[:, :, 1], hsv[:, :, 2]
+        white_mask = (sat < 60) & (val > 140)
+        color_mask = sat > 90
+        return white_mask, color_mask
+
+    """
+        Hue-Saturation colour histogram of a patch, invariant to small spatial shifts.
+        A mere warp shift keeps the colour composition; a hand brings a new colour in.
+    """
+    def _patchHist(self, patch_bgr):
+        hsv = cv.cvtColor(np.clip(patch_bgr, 0, 255).astype(np.uint8), cv.COLOR_BGR2HSV)
+        hist = cv.calcHist([hsv], [0, 1], None, [16, 16], [0, 180, 0, 256])
+        cv.normalize(hist, hist, 0, 1, cv.NORM_MINMAX)
+        return hist
+
+    """
+        Fraction of changed pixels in the target area and the median of the control
+        areas, with respect to their reference appearance. Returns None when not
+        observable this frame (no valid warp/grid). The ROIs are re-anchored to the
+        current grid every frame: warp shifts move grid and content together, so the
+        patches stay aligned with the same physical board area.
+    """
+    def getTargetOcclusionMeasure(self):
+        if self.target_cell is None or self.board_view is None \
+           or self.homography is None or self.cell_matrix is None:
+            return None
+
+        cells = [self.target_cell] + self.control_cells
+        rois = [self._cellRoi(cell) for cell in cells]
+        if any(roi is None for roi in rois):
+            return None
+        self.last_target_roi = rois[0]
+        self.last_control_rois = rois[1:]
+
+        patches = [self._extractPatch(roi) for roi in rois]
+        if self.tracking_ref_patches is None:
+            self.tracking_ref_patches = patches
+            self.tracking_ref_masks = [self._segmentPatch(patch) for patch in patches]
+            self.tracking_ref_hists = [self._patchHist(patch) for patch in patches]
+            return (0.0, 0.0)
+
+        def changedFraction(patch, reference, masks, ref_hist):
+            # GATE 1 - colour composition: a real hand brings a new colour into the
+            # ROI; a mere warp shift keeps the same colours. If the colour histogram
+            # barely changed, it is a shift, not an occlusion -> 0.
+            if cv.compareHist(ref_hist, self._patchHist(patch), cv.HISTCMP_BHATTACHARYYA) < self.occlusion_hist_threshold:
+                return 0.0
+            # GATE 2 - compensate a small whole-ROI shift before measuring change. The
+            # warp jitters a few px between frames (the arucos are detected with slight
+            # variation), so the board content "dances" under the fixed ROI; aligning
+            # the patch to its reference first means a residual shift leaves little
+            # change, while a real hand over the piece cannot be aligned away.
+            ref_gray = cv.cvtColor(np.clip(reference, 0, 255).astype(np.uint8), cv.COLOR_BGR2GRAY).astype(np.float32)
+            pat_gray = cv.cvtColor(np.clip(patch, 0, 255).astype(np.uint8), cv.COLOR_BGR2GRAY).astype(np.float32)
+            try:
+                (dx, dy), _ = cv.phaseCorrelate(ref_gray, pat_gray)
+            except cv.error:
+                dx, dy = 0.0, 0.0
+            s = self.occlusion_max_align_shift
+            dx, dy = max(-s, min(s, dx)), max(-s, min(s, dy))
+            if abs(dx) > 0.3 or abs(dy) > 0.3:
+                M = np.float32([[1, 0, -dx], [0, 1, -dy]])
+                patch = cv.warpAffine(patch, M, (patch.shape[1], patch.shape[0]), borderMode=cv.BORDER_REFLECT)
+            diff = np.abs(patch - reference).sum(axis=2)
+            changed = diff > self.occlusion_pixel_diff_threshold
+            # Change measured separately on the white (gutters) and the colored (piece)
+            # pixels of the cell, then averaged. A finger reaching the target covers the
+            # colored piece reliably but the white gutters only sometimes; requiring BOTH
+            # (min) missed those touches, so the MEAN of the two zones is used. Shadows
+            # (which would change both zones) are already rejected upstream by the colour
+            # histogram gate and by the target-vs-control separation. Fall back to the
+            # whole patch if a zone is too scarce to be reliable (e.g. a piece with almost
+            # no white border).
+            min_px = self.occlusion_min_zone_fraction * changed.size
+            zone_fractions = [float(changed[mask].mean()) for mask in masks if mask.sum() >= min_px]
+            if not zone_fractions:
+                return float(changed.mean())
+            return float(np.mean(zone_fractions))
+
+        fractions = [changedFraction(patch, ref, masks, ref_hist)
+                     for patch, ref, masks, ref_hist in zip(patches, self.tracking_ref_patches, self.tracking_ref_masks, self.tracking_ref_hists)]
+        frac_target = fractions[0]
+        frac_control = float(np.median(fractions[1:]))
+
+        # Slow reference update while the scene is calm, to absorb lighting drift.
+        # Masks are not recomputed: the white/color structure of the cell is stable.
+        if frac_target < 0.05 and frac_control < 0.05:
+            self.tracking_ref_patches = [0.95*ref + 0.05*patch
+                                         for ref, patch in zip(self.tracking_ref_patches, patches)]
+
+        return (frac_target, frac_control)
 
     def detectSlots(self, image):
         pass

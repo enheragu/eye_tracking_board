@@ -1,2 +1,14 @@
-__pycache__
-data
+# Python
+__pycache__/
+*.pyc
+
+# Input/output data lives on the external drive, never in the repo
+data/
+
+# Raw captures and data artifacts (the repo keeps results, e.g. camera_calib.json,
+# not the raw videos/zips)
+*.mp4
+*.zip
+
+# Temporary preview scratch
+scratch_view/

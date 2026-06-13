@@ -10,10 +10,11 @@ from tabulate import tabulate
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, REPO_ROOT)
 
+from src.core.version import __version__
 from src.core.utils import parseYaml
 
 # Configuración global
-DEFAULT_OUTPUT_ROOT = os.environ.get('EEHA_OUTPUT_ROOT', '/media/quique/EXTERNAL_USB1/BusquedaVisualAnalysis/OutputData')
+DEFAULT_OUTPUT_ROOT = os.environ.get('EEHA_OUTPUT_ROOT', f'/media/quique/EXTERNAL_USB1/BusquedaVisualAnalysis/OutputData_v{__version__}')
 DATA_PATH = os.path.join(DEFAULT_OUTPUT_ROOT, 'gaze')
 trials_config_path = os.path.join(REPO_ROOT, 'cfg/default_trials_config.yaml')
 yaml_file_name = "data_{}.yaml"

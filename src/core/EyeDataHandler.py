@@ -56,9 +56,11 @@ class EyeDataHandlerPLDATA:
         self.data = []
 
         last_world_index = 0
+        all_timestamps = []
         for index, item in enumerate(pldata.data):
             dict_obj = dict(item)
             current_timestamp = dict_obj['timestamp']
+            all_timestamps.append(current_timestamp)
             duration = 0 if not 'duration' in dict_obj else dict_obj['duration']
             if dict_obj['confidence'] > GAZE_CONFIDENCE_THRESHOLD:
                 self.data.append({'norm_pos': dict_obj['norm_pos'],
@@ -68,7 +70,31 @@ class EyeDataHandlerPLDATA:
         # print_named_dict('[EyeDataHandlerPLDATA(::__init__] dict_obj', dict_obj)
         self.data.sort(key=lambda x: x['timestamp'])
         self.world_timestamps = sorted(self.world_timestamps)
-        log(f"[EyeDataHandlerPLDATA(::__init__] Total number of {topic_data}: {len(self.data)}")
+
+        # Real gaze sampling rate over ALL samples (valid AND invalid): each sample
+        # represents one sampling interval (1/rate), so a valid sample landing on a
+        # cell counts 1/rate seconds. Invalid (low-confidence) samples in between are
+        # "no data" gaps, they do NOT stretch the previous valid sample; using the
+        # valid-only rate would inflate dwell times. The rate is taken from the MEDIAN
+        # inter-sample interval (robust to isolated pauses). gaze_continuity is the
+        # fraction of intervals within +-20% of that median: ~1.0 means a regular,
+        # continuous stream (no hidden dropped samples); a low value would mean the
+        # stream has gaps and the rate cannot be trusted as a uniform clock. The Pupil
+        # Core nominal rate is 200 Hz but the exported gaze runs lower (~124 Hz), so
+        # this must be stored and used to convert counts to time, not assumed 200 Hz.
+        self.gaze_sampling_rate = None
+        self.gaze_continuity = None
+        if len(all_timestamps) > 2:
+            all_timestamps.sort()
+            intervals = np.diff(all_timestamps)
+            intervals = intervals[intervals > 0]
+            if intervals.size:
+                median_dt = float(np.median(intervals))
+                self.gaze_sampling_rate = 1.0 / median_dt
+                self.gaze_continuity = float(np.mean(np.abs(intervals - median_dt) <= 0.2*median_dt))
+        rate_str = f"{self.gaze_sampling_rate:.1f} Hz (continuity {self.gaze_continuity:.2%})" if self.gaze_sampling_rate else "N/A"
+        log(f"[EyeDataHandlerPLDATA(::__init__] Real gaze sampling rate (all samples, median interval): {rate_str}")
+        log(f"[EyeDataHandlerPLDATA(::__init__] Total samples: {len(all_timestamps)}; valid (conf>{GAZE_CONFIDENCE_THRESHOLD}): {len(self.data)}")
         log(f"[EyeDataHandlerPLDATA(::__init__] Duplicated timestamps in {topic_data} file: {len(check_duplicated_timestamps(self.data))}")
 
         duplicated = 0

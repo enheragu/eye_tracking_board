@@ -16,11 +16,14 @@ import sys
 import time
 import argparse
 import subprocess
+
 from concurrent.futures import ThreadPoolExecutor, as_completed
+
+from core.version import __version__
 
 CURRENT_FILE_PATH = os.path.dirname(os.path.abspath(__file__))
 DEFAULT_DATA_ROOT = os.environ.get('EEHA_DATA_ROOT', '/media/quique/EXTERNAL_USB1/BusquedaVisualAnalysis/InputData')
-DEFAULT_OUTPUT_ROOT = os.environ.get('EEHA_OUTPUT_ROOT', '/media/quique/EXTERNAL_USB1/BusquedaVisualAnalysis/OutputData')
+DEFAULT_OUTPUT_ROOT = os.environ.get('EEHA_OUTPUT_ROOT', f'/media/quique/EXTERNAL_USB1/BusquedaVisualAnalysis/OutputData_v{__version__}')
 
 
 def discoverParticipants(data_root):

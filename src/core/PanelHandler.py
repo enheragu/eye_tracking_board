@@ -41,6 +41,23 @@ class PanelHandler:
     def getCurrentPanel(self):
         return self.last_detected
 
+    """
+        Outline of the currently detected sample panel projected onto the undistorted
+        image, used to discard gaze samples that fall over the panel while it is
+        being removed. The warp frame maps the configured sheet area, slightly
+        smaller than the physical cardboard: expand scales it around its center.
+        Returns None when no panel is detected this frame.
+    """
+    def getPanelPolygon(self, expand=1.05):
+        if self.last_detected is None or self.homography is None:
+            return None
+        corners = np.array([[0, 0], [self.warp_width-1, 0],
+                            [self.warp_width-1, self.warp_height-1],
+                            [0, self.warp_height-1]], dtype=np.float32)
+        polygon = cv.perspectiveTransform(corners.reshape(-1, 1, 2), np.linalg.inv(self.homography)).reshape(-1, 2)
+        center = polygon.mean(axis=0)
+        return (center + (polygon - center) * expand).astype(np.float32)
+
     def step(self, undistorted_image, corners, ids):
         self.panel_view = self.computeApplyHomography(undistorted_image, corners, ids)
 

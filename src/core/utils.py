@@ -2,6 +2,7 @@
 #!/usr/bin/env python3
 # encoding: utf-8
 
+import sys
 import math
 from tqdm import tqdm
 
@@ -19,8 +20,11 @@ class bcolors:
     BOLD = '\033[1m'
     UNDERLINE = '\033[4m'
 
-## log in terminal without affecting tqdm bar
+## log in terminal without affecting tqdm bar. The progress bar lives in stderr
+# (tqdm default); tqdm.write only clears bars bound to the SAME stream, so logs
+# must go to stderr too or they get overwritten by the bar redraw.
 def log(*args, **kwargs):
+    kwargs.setdefault('file', sys.stderr)
     tqdm.write(*args, **kwargs)
 
 ## Verbose logging, disabled by default. High frequency logs (per gaze sample/frame)
@@ -33,7 +37,7 @@ def setVerboseLog(enabled):
 
 def log_debug(*args, **kwargs):
     if LOG_VERBOSE:
-        tqdm.write(*args, **kwargs)
+        log(*args, **kwargs)
 
 from types import MappingProxyType
 def print_tuple(tupla, indent=0):
@@ -258,8 +262,8 @@ def parseYaml(file_path):
         with open(file_path) as file:
             return yaml.load(file, Loader=SafeLoader)
     except yaml.YAMLError as exc:
-        print(f"Error in YAML file: {exc}")
-        
+        log(f"Error in YAML file: {exc}")
+
     return {}
 
 # Check if all values in the dictionary/list are of basic types

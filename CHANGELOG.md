@@ -4,6 +4,41 @@ All notable changes to this project are documented in this file. Versions prior 
 1.0.0 were reconstructed from the git history. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [1.1.0](https://github.com/enheragu/eye_tracking_board/releases/tag/v1.1.0) - 2026-06-13
+
+Per-trial event marks (search / motor phases) and a best-effort target-touch detector,
+plus state-machine robustness. Trial start/end keep the 1.0.0 criteria, so
+`trial_duration_s` is unchanged and comparable; 1.1.0 only **adds** marks. Validated on
+the 20 participants: **0 valid trials lost vs 1.0.0, +21 rescued.** Detail in the
+[guide](docs/guia_procesamiento.md) and [technical doc](docs/documentacion_tecnica.md).
+
+### Added
+- **Per-trial event marks** (frame columns + per-phase durations): `frame_early_init`,
+  `frame_init`, `frame_target_found`, `frame_motor_onset`, `frame_target_touch`,
+  `frame_hand_exit`, `frame_end`. Independent — a missing one only blanks its column.
+- **Target-touch detector** (`frame_target_touch`, best-effort, does **not** close the
+  trial): change-detection on the target cell, watched through the motor phase. Coverage
+  ~11% → **~83%**.
+- **Early gaze during panel removal** (`pre_start` phase).
+- **Per-participant gaze sampling rate** (`gaze_sampling_rate`, measured — not assumed
+  200 Hz) and `gaze_continuity`.
+- **HTML report**: matrix comparison (participants × trials, versions as sub-cells), tabs
+  incl. time-to-touch and touch diagnostics (inline-SVG); frequencies + combined CSVs.
+- Spurious ArUco filtering, stabilised cell grid, configurable IO roots, headless debug video.
+
+### Changed (state-machine robustness)
+- Unexpected panels handled uniformly: an out-of-sequence panel no longer terminates the
+  run, a panel swap no longer hangs, and `test_motor_recovery` yields to any confirmed
+  panel (recovers re-presented trials — the +21 rescued).
+
+### Known limitation
+- Target-touch is best-effort (~83%); residual misses are the occlusion signal or very few
+  ArUcos, **not** the homography (the warped view is stable, measured). A missing touch can
+  be estimated as `frame_motor_onset + 0.24·(frame_hand_exit − frame_motor_onset)`.
+
+### Fixed
+- Log messages no longer overwritten by the progress bar (`print` → `log`).
+
 ## [1.0.0](https://github.com/enheragu/eye_tracking_board/releases/tag/v1.0.0) - 2026-06-12
 
 First stable, validated release. Outputs are **not directly comparable** with 0.x:
