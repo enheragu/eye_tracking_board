@@ -7,8 +7,10 @@ from matplotlib.colors import LinearSegmentedColormap
 from matplotlib.offsetbox import OffsetImage, AnnotationBbox
 from PIL import Image
 
+from src.core.version import __version__
+
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-DEFAULT_OUTPUT_ROOT = os.environ.get('EEHA_OUTPUT_ROOT', '/media/quique/EXTERNAL_USB1/BusquedaVisualAnalysis/OutputData')
+DEFAULT_OUTPUT_ROOT = os.environ.get('EEHA_OUTPUT_ROOT', f'/media/quique/EXTERNAL_USB1/BusquedaVisualAnalysis/OutputData_v{__version__}')
 output_path = os.path.join(DEFAULT_OUTPUT_ROOT, 'plots')
 data_path = os.path.join(DEFAULT_OUTPUT_ROOT, 'gaze')
 image_path = os.path.join(REPO_ROOT, 'docs/media/TableroSinBordes.png')

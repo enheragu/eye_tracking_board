@@ -16,13 +16,20 @@
 """
 
 import os
+import sys
 import csv
 import argparse
 import statistics
 
 from tabulate import tabulate
 
-DEFAULT_NEW_ROOT = os.environ.get('EEHA_OUTPUT_ROOT', '/media/quique/EXTERNAL_USB1/BusquedaVisualAnalysis/OutputData')
+# Tools live in src/tools/, make the repo root importable (src package)
+REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+sys.path.insert(0, REPO_ROOT)
+
+from src.core.version import __version__
+
+DEFAULT_NEW_ROOT = os.environ.get('EEHA_OUTPUT_ROOT', f'/media/quique/EXTERNAL_USB1/BusquedaVisualAnalysis/OutputData_v{__version__}')
 
 ERROR_PREFIXES = ('missing_trial_error', 'transition_error', 'end_of_video_error')
 

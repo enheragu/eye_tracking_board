@@ -60,11 +60,16 @@ def detectAllArucos(undistorted_frame, aruco_dictionary = ARUCO_DICTIONARY):
     return corners, ids
 
 class ArucoBoardHandler:
-    def __init__(self, arucoboard_cfg_path, colors_list, color, cameraMatrix = None, distCoeffs = None, shape = '', estimate_rotation = True):
+    def __init__(self, arucoboard_cfg_path, colors_list, color, cameraMatrix = None, distCoeffs = None, shape = '', estimate_rotation = True, min_markers = None):
 
         self.colors_list = colors_list
         self.color = color
         self.shape = shape
+        # Minimum detected configured markers to estimate the board pose. None falls
+        # back to ~half of the configured markers; a lower absolute value keeps the
+        # pose alive while the hand covers part of the board (helps occlusion-based
+        # trial end and early gaze projection)
+        self.min_markers = min_markers
         self.arucos_detected = []
 
         self.cameraMatrix = cameraMatrix
@@ -184,9 +189,9 @@ class ArucoBoardHandler:
         homography = None
         _, (warp_width, warp_height) = rescale_3d_points(self.board_poinst_3d, undistorted_frame.shape)
 
-        # Should detect all arucos?
-        # Problem with board -> detect at least 50% of configured arucos
-        aruco_detected_min = max(1, len(self.aruco_config)*0.49)
+        # Minimum configured markers to estimate the pose: an explicit min_markers
+        # (board) or ~half of them by default (panels)
+        aruco_detected_min = self.min_markers if self.min_markers is not None else max(1, len(self.aruco_config)*0.49)
 
         # Cheap early exit on the detected id set, before any matching/pose work.
         # With 10+ panel configurations checked per frame this skips almost all work
