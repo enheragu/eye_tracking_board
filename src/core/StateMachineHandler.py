@@ -20,6 +20,22 @@ from src.core.utils import log, log_debug
 from src.core.version import __version__
 from src.core.ArucoBoardHandler import detectAllArucos
 
+# Surgical magnifying-glass trace of the touch / hand_exit signals, enabled with
+# EEHA_TRACE_TOUCH=1. Dumps one line per watched frame from the REAL code path (run a
+# narrow window with --start_frame/--end_frame to debug a single trial faithfully),
+# kept separate from the per-gaze-sample --debug_log firehose.
+TRACE_TOUCH = bool(os.environ.get('EEHA_TRACE_TOUCH'))
+
+# FIX-1 (v1.2.0, EXPERIMENTAL - OFF by default): advance the target-touch reference
+# capture into the panel-removal window so edge / fast-reach targets get a clean
+# reference. MEASURED REGRESSION in its current form: the cleanliness gate
+# (isTargetAreaClear only rejects the blank panel, NOT the hand) captures a DIRTY
+# reference on trials where the hand is already approaching during panel removal, which
+# SUPPRESSES the real touch -> net -7 pts touch coverage on a 4-rep A/B (+14 rescued on
+# 042/middle rows, -29 lost elsewhere). Needs a stronger cleanliness gate (target cell
+# must match its EXPECTED colored content, not skin) before it can be enabled.
+EARLY_REF = os.environ.get('EEHA_EARLY_REF', '0') != '0'
+
 def bufferStateChangeMsg(msg):
     return f"{bcolors.BOLD}{bcolors.OKCYAN}{msg}{bcolors.ENDC}\n"
 
@@ -84,6 +100,11 @@ class StateMachine:
         self.board_metrics_now = {}
         self.current_test_key = None
 
+        # Full trace of state-machine transitions: every time the active state changes
+        # we log the exact World frame and the block/trial it is associated with, so the
+        # analysis team can reconstruct, per participant, when each stage started/ended.
+        self.state_transitions = []
+
         self.norm_coord_list = []
         self.desnormalized_coord_list = []
 
@@ -104,6 +125,16 @@ class StateMachine:
         # requirement keeps false positives down.
         self.target_occlusion_threshold = 0.20   # fraction of changed px in target area
         self.target_occlusion_separation = 0.10  # margin over the control (global) change
+        # Per-COLOUR touch threshold (v1.2, data-driven from the 20-participant fT
+        # distributions). Real touches peak >=0.22 for every colour, but WARM pieces
+        # (red/yellow ~ skin hue) produce a genuinely smaller signal far more often (a
+        # warm hand over a warm piece barely changes the colour), so many real touches
+        # land at ~0.13-0.20 and were missed (red: 68 misses vs blue 11). Lower thresholds
+        # for those; blue/green keep 0.20 (already 88-89%). The control separation guards
+        # against false positives; GATE 1 (colour) is also skipped for warm targets.
+        self.touch_threshold_by_color = {'red': 0.13, 'yellow': 0.15, 'blue': 0.20, 'green': 0.20}
+        self.touch_threshold = self.target_occlusion_threshold
+        self.target_is_warm = False
         # Sustained-occlusion frames to confirm a touch. Most trials are short (median
         # ~0.7s) and the touch is a brief gesture, so a long window (6 frames) almost
         # never completed before the trial ended at the border crossing: the touch is
@@ -142,6 +173,37 @@ class StateMachine:
         self.motor_recovery_exit_frame = None
         self.pending_finish = None
         self.last_occlusion_measure = None
+
+        ## hand_exit via whole-board occlusion baseline (v1.2.0, decoupled from the
+        # touch). The board occlusion is sampled from test_execution (clean reference)
+        # and its sustained return to baseline in the motor phase marks the hand
+        # leaving, regardless of whether the touch was detected. Falls back to the
+        # contour-based path when the board pose is unavailable.
+        self.board_occ_active = False       # hand_occ tracking runs (clean ref captured)
+        self.board_occ_peak = 0.0
+        self.board_occ_exit_streak = 0
+        self.board_occ_exit_start_frame = None
+        self.last_board_occ = None          # last whole-board occlusion (for the trace)
+        ## hand_exit via LOCAL target occlusion (fT) returning to baseline. More
+        # sensitive than the whole-board occlusion for small reaches (a finger over a
+        # single cell barely moves the whole-board fraction but clearly the cell's).
+        self.ft_peak = 0.0
+        self.ft_exit_streak = 0
+        self.ft_exit_start_frame = None
+        self.ft_enter_level = 0.20          # fT must have clearly risen (a reach)
+        self.ft_exit_level = 0.05           # fT back to ~baseline = hand off the target
+        self.ft_exit_confirm = 3
+        self.board_occ_enter_level = 0.12   # peak occlusion proving the hand entered
+        self.board_occ_exit_level = 0.05    # occlusion back to ~baseline = hand left
+        self.board_occ_exit_confirm = 3     # sustained frames to confirm the return
+
+        ## DIAGNOSTICS (Fase 0, v1.2.0). Per-trial in-memory time series of the cheap
+        # occlusion measures already computed during the watched window. Kept in memory
+        # only (not serialised) and consumed at trial close to (a) derive WHY a touch was
+        # missed (touch_diag taxonomy) and (b) feed the post-hoc re-threshold fallback,
+        # both with zero extra decode. Each entry: (frame, frac_target, frac_control,
+        # has_grid, tracking_active). frac_* are None when not measurable that frame.
+        self.occlusion_series = []
 
         ## Per-frame gaze classification, for the debug view: list of
         # (undistorted_coord, kind) with kind in execution/pre_start/on_panel/blank/not_board
@@ -188,11 +250,13 @@ class StateMachine:
         if panel_polygon is not None:
             cv.polylines(canvas, [panel_polygon.astype(np.int32)], isClosed=True, color=(0,255,255), thickness=2)
 
-        ## Gaze samples over the camera view, color-coded by how they were used:
-        # green=counted (execution), orange=pre_start, red=discarded over the panel,
-        # gray=discarded as blank (panel covering), white=not_board, blue=not processed
-        GAZE_COLORS = {'execution': (0,255,0), 'pre_start': (0,165,255), 'on_panel': (0,0,255),
-                       'blank': (160,160,160), 'not_board': (255,255,255), 'unprocessed': (255,200,0)}
+        ## Gaze samples over the camera view, drawn with a UNIFIED marker (dark halo +
+        # coloured core + thin light ring) so they read clearly on any background and are
+        # never confused with the ArUco corner dots. Colour encodes how the sample was used:
+        # green=counted (execution), orange=pre_start (counted), magenta=discarded over the
+        # panel, gray=blank (panel covering), blue=not_board (off board), cyan=not processed.
+        GAZE_COLORS = {'execution': (0,255,0), 'pre_start': (0,165,255), 'on_panel': (255,0,255),
+                       'blank': (170,170,170), 'not_board': (255,0,0), 'unprocessed': (255,200,0)}
         if self.norm_coord_list and self.board_handler.display_fixation:
             classification = self.gaze_classification
             if not classification:
@@ -202,8 +266,10 @@ class StateMachine:
             for und_coord, kind in classification:
                 if und_coord[0] < 0 or und_coord[1] < 0:
                     continue
-                cv.circle(canvas, (int(und_coord[0]), int(und_coord[1])), radius=5,
-                          color=GAZE_COLORS.get(kind, (255,255,255)), thickness=-1)
+                cx, cy = int(und_coord[0]), int(und_coord[1])
+                cv.circle(canvas, (cx, cy), 8, (20, 20, 20), thickness=-1)
+                cv.circle(canvas, (cx, cy), 6, GAZE_COLORS.get(kind, (255, 255, 255)), thickness=-1)
+                cv.circle(canvas, (cx, cy), 8, (245, 245, 245), thickness=1, lineType=cv.LINE_AA)
 
         ## Status panel (top-left). proc FPS = processing speed of the software (not
         # the video nor playback rate)
@@ -262,6 +328,10 @@ class StateMachine:
                            (10, pip.shape[0]-12), cv.FONT_HERSHEY_SIMPLEX, 0.8, (255,255,0), 2, cv.LINE_AA)
         elif self.panel_handler.getCurrentPanel() is not None:
             pip = self.panel_handler.getVisualization(self.corners, self.ids)
+
+        # Full-resolution warped board (with grid + target/control occlusion ROIs) before it
+        # is shrunk into the PiP corner, so documentation figures can use it at full quality.
+        self.last_pip_view = pip.copy() if pip is not None else None
 
         if pip is not None and pip.shape[0] > 0 and pip.shape[1] > 0:
             pip_w = int(canvas.shape[1] * 0.38)
@@ -342,11 +412,18 @@ class StateMachine:
     def step(self, original_image, capture_idx):
         self.tm.start()
 
-        ## Undistort and detect arucos once per frame; both image and detections are
-        # shared by panel and board handlers (it was being done twice per frame, and
-        # panel homographies mixed corners from the distorted image)
+        ## Undistort the image (alpha=0, full resolution) for the board/panel handlers.
         self.undistorted_image = self.distortion_handler.undistortImage(original_image)
-        self.corners, self.ids = detectAllArucos(self.undistorted_image)
+        ## ArUcos are detected on the ORIGINAL (distorted) image, NOT the undistorted one: the
+        # undistort pushes the edge markers — especially the top row — out of frame and they
+        # are lost (measured: participant 042 lost markers in 16/16 frames, ~5 per frame). The
+        # detected corners are then undistorted to the alpha=0 image space (newK == K, so they
+        # match the gaze projection to 0.15 px), feeding the homography more markers without
+        # any change in resolution or in the gaze coordinates.
+        corners_dist, self.ids = detectAllArucos(original_image)
+        self.corners = [self.distortion_handler.correctCoordinates(c.reshape(-1, 2), homography=None)
+                            .reshape(1, -1, 2).astype(np.float32)
+                        for c in corners_dist]
         self.corners, self.ids = self.filterValidArucos(self.corners, self.ids)
         # NOTE: aruco corner smoothing (smoothArucos) was tried to stabilise the
         # homography but it degraded contour detection and lost trials; reverted.
@@ -370,6 +447,10 @@ class StateMachine:
             previous_state = self.current_state
             self.state_info[self.current_state]['callback'](self.undistorted_image, capture_idx, self.desnormalized_coord_list)
             self.frame_speed_multiplier = self.state_info[self.current_state]['frame_mult']
+            # A callback may switch the state (possibly several times within this frame):
+            # record each transition with its exact frame and the block/trial it belongs to.
+            if self.current_state != previous_state:
+                self._recordTransition(previous_state, self.current_state, capture_idx)
         
         if self.norm_coord_list: self.fixation_data_store[self.current_state] += len(self.norm_coord_list)
         self.frame_data_store[self.current_state] += 1
@@ -381,6 +462,19 @@ class StateMachine:
         #     exit()
         
         self.tm.stop()
+
+    def _recordTransition(self, from_state, to_state, capture_idx):
+        # block/trial reflect the trial active right after the callback (init advances
+        # them when it accepts a panel; on close they still point at the trial that ended)
+        trial_name = ''
+        if self.current_test_key is not None:
+            trial_name = f"{self.current_test_key['color']}_{self.current_test_key['shape']}"
+        self.state_transitions.append({'frame': capture_idx,
+                                       'block': self.block_id,
+                                       'trial': self.trial_id,
+                                       'trial_name': trial_name,
+                                       'from_state': from_state,
+                                       'to_state': to_state})
 
     ## Used in case something happens and some state change is missed: if a DIFFERENT
     # panel appears while a trial is being set up or run, the current trial is closed
@@ -406,6 +500,7 @@ class StateMachine:
             self.trimTrialToFrame(self.board_metrics_now, end_capture)
             self.board_metrics_now['status'] = 'test_finish_by_next_panel'
             self.board_metrics_now['trial_id'] = self.trial_id
+            self._deriveTouchDiagnostics(self.board_metrics_now)
             key = f"{self.current_test_key['color']}_{self.current_test_key['shape']}"
             logStateChange(f"[StateMachine::handleUnexpectedPanel] [{capture_idx}] New panel ({current_panel}) while trial for {self.current_test_key} was running. Closed at frame {end_capture} as test_finish_by_next_panel.")
         else:
@@ -508,11 +603,16 @@ class StateMachine:
     def test_start_execution_state(self, undistorted_image, capture_idx, desnormalized_coord_list):
         if self.is_error_init_state(undistorted_image, capture_idx, desnormalized_coord_list): return
 
-        self.board_handler.step(undistorted_image, self.corners, self.ids)
+        self.board_handler.step(undistorted_image, self.corners, self.ids,
+                                panel_polygon=self.panel_handler.getPanelPolygon())
 
         # Gaze can already be projected while the panel is being removed (board pose
         # from arucos + session reference grid); stored flagged as pre_start
         self.processEarlyGaze(capture_idx, desnormalized_coord_list)
+
+        # FIX-1: prime the touch reference here, in the same permissive window the early
+        # gaze uses, so edge targets get a clean reference before the hand arrives.
+        self._primeTouchReference(capture_idx)
 
         # Require a few consecutive raw detections before starting the trial: a single
         # noisy detection produced degenerate, near-empty trials. init_capture is then
@@ -558,16 +658,31 @@ class StateMachine:
                     self.board_metrics_now[color][shape][slot] += 1
 
             # Start tracking the target area appearance for the end-of-trial detection,
-            # but only after a warmup so the panel removal does not fake a touch
-            self.board_handler.initTargetTracking(self.board_metrics_now['target_cord'])
-            self.target_occlusion_counter = 0
-            self.target_occlusion_start_frame = None
-            self.target_warmup_end = capture_idx + self.target_warmup_frames
-            self.target_tracking_active = False
+            # but only after a warmup so the panel removal does not fake a touch.
+            # Skipped when FIX-1 already primed a CLEAN reference in the panel-removal
+            # window (target_tracking_active True): re-initialising here would discard it.
+            self.target_is_warm = str(self.current_test_key['color']) in ('red', 'yellow')
+            self.touch_threshold = self.touch_threshold_by_color.get(
+                str(self.current_test_key['color']), self.target_occlusion_threshold)
+            if not self.target_tracking_active:
+                self.board_handler.initTargetTracking(self.board_metrics_now['target_cord'],
+                                                      target_color=self.current_test_key['color'])
+                self.target_occlusion_counter = 0
+                self.target_occlusion_start_frame = None
+                self.target_warmup_end = capture_idx + self.target_warmup_frames
+                self.target_tracking_active = False
+
+            # hand_occ tracking (hand_exit): capture a CLEAN whole-board
+            # reference now -- the board just passed the contour-confirm streak, so it is
+            # clean -- and run it every frame from here, independent of the touch tracking.
+            self.board_handler.board_occ_ref = None
+            self.board_occ_active = True
+            self.board_occ_peak = 0.0
 
         if self.is_error_init_state(undistorted_image, capture_idx, desnormalized_coord_list): return
 
-        self.board_handler.step(undistorted_image, self.corners, self.ids)
+        self.board_handler.step(undistorted_image, self.corners, self.ids,
+                                panel_polygon=self.panel_handler.getPanelPolygon())
         if self.board_handler.contour_detected_raw:
             self.last_raw_contour_frame = capture_idx
         coord_data_list = self.board_handler.getPixelInfo(desnormalized_coord_list)
@@ -584,6 +699,10 @@ class StateMachine:
         # _trackTargetTouch): the touch physically happens when the hand is already over
         # the board (contour being lost), so watching it only here missed most touches.
         self._trackTargetTouch(capture_idx)
+        # Seed the whole-board occlusion reference on the clean board and build its peak
+        # as the hand enters, so the motor phase can detect the return (hand_exit).
+        self._trackBoardOcclusion(capture_idx)
+        self._traceTouch(capture_idx, 'execution')
 
         ## TRIAL END: sustained board-contour loss (the v1.0 criterion, restores the
         # exact timing so the state machine stays in sync). The hand entering the
@@ -611,33 +730,155 @@ class StateMachine:
     def _trackTargetTouch(self, capture_idx):
         self.last_occlusion_measure = None
         if 'target_touch_capture' in self.board_metrics_now:
+            # Touch already found: keep measuring the target occlusion (for the fT-return
+            # hand_exit) but stop re-detecting the touch.
+            if self.target_tracking_active:
+                self.last_occlusion_measure = self.board_handler.getTargetOcclusionMeasure()
             return
+        # Diagnostics: whether the grid (cell_matrix) is available this watched frame.
+        # Its absence (too few ArUcos) is the few_arucos failure mode and the only
+        # place where the white-grid localization fallback can help (roadmap A.1).
+        has_grid = self.board_handler.cell_matrix is not None
         # Activation needs the board clear of the panel; it can only latch while the
         # contour is still seen (in test_execution). Once active it stays active into
         # the motor phase.
         if not self.target_tracking_active:
-            if capture_idx >= self.target_warmup_end and self.board_handler.contour_detected_raw \
-               and self.board_handler.isTargetAreaClear(self.board_metrics_now.get('target_cord')):
+            # With a session template the reference is clean regardless of the live frame,
+            # so we no longer need a clean per-trial window (contour_detected_raw): activate
+            # as soon as the panel is gone (target area not blank) and the grid is available.
+            # This is what rescues EDGE targets, where the hand covers the target from the
+            # start and the contour is already lost. Without a template (very first trial)
+            # we keep the old strict gate. isTargetAreaClear still rejects the panel sweep.
+            has_template = self.board_handler.session_template is not None
+            if capture_idx >= self.target_warmup_end and self.board_handler.cell_matrix is not None \
+               and self.board_handler.isTargetAreaClear(self.board_metrics_now.get('target_cord')) \
+               and (self.board_handler.contour_detected_raw or has_template):
                 self.target_tracking_active = True
         if not self.target_tracking_active:
+            self.occlusion_series.append((capture_idx, None, None, has_grid, False))
             return
         self.last_occlusion_measure = self.board_handler.getTargetOcclusionMeasure()
         if self.last_occlusion_measure is not None:
             frac_target, frac_control = self.last_occlusion_measure
-            if frac_target > self.target_occlusion_threshold \
+            self.occlusion_series.append((capture_idx, float(frac_target), float(frac_control), has_grid, True))
+            if frac_target > self.touch_threshold \
                and (frac_target - frac_control) > self.target_occlusion_separation:
                 if self.target_occlusion_counter == 0:
                     self.target_occlusion_start_frame = capture_idx
                 self.target_occlusion_counter += 1
             else:
                 self.target_occlusion_counter = 0
+        else:
+            self.occlusion_series.append((capture_idx, None, None, has_grid, True))
         if self.target_occlusion_counter >= self.target_occlusion_confirm_threshold:
             self.board_metrics_now['target_touch_capture'] = self.target_occlusion_start_frame
+
+    ## FIX-1: captures the touch reference in the permissive panel-removal window (the
+    # same place the early gaze already projects onto the board), decoupled from the
+    # board CONTOUR. Edge / fast-reach targets are occluded by the hand by the time the
+    # contour-driven test_execution starts, so the strict (contour-gated) activation
+    # never finds a clean frame; here we capture it as soon as the board pose + grid are
+    # available and the target cell is clear of the panel. Captures ONCE per trial.
+    def _primeTouchReference(self, capture_idx):
+        if not EARLY_REF or self.target_tracking_active or self.current_test_key is None:
+            return
+        if self.board_handler.cell_matrix is None or self.board_handler.homography is None:
+            return
+        target_cell = list(self.board_handler.getShapeCellIndex(
+            self.current_test_key['shape'], self.current_test_key['color']))
+        if target_cell[0] is None or not self.board_handler.isTargetAreaClear(target_cell):
+            return
+        self.board_handler.initTargetTracking(target_cell, target_color=self.current_test_key['color'])
+        self.board_handler.getTargetOcclusionMeasure()  # first call captures the clean ref
+        self.board_handler.getBoardOcclusionMeasure()
+        self.target_occlusion_counter = 0
+        self.target_occlusion_start_frame = None
+        self.target_warmup_end = capture_idx          # panel already gone: no extra warmup
+        self.target_tracking_active = True
+        if TRACE_TOUCH:
+            log(f"[TRACE prime       {capture_idx}] early clean touch reference for cell {target_cell}")
+
+    ## Samples the whole-board occlusion and tracks its peak. Only runs once target
+    # tracking is active so the reference getBoardOcclusionMeasure captures the FIRST
+    # time is the CLEAN board (the hand has not reached yet), never the hand already
+    # over it. Called from test_execution (to seed the clean reference and build the
+    # peak as the hand enters) and from test_motor_recovery (to detect the return).
+    # Returns the current occlusion fraction, or None when not sampled/observable.
+    def _trackBoardOcclusion(self, capture_idx):
+        if not self.board_occ_active:
+            self.last_board_occ = None
+            return None
+        board_occ = self.board_handler.getBoardOcclusionMeasure()
+        self.last_board_occ = board_occ
+        if board_occ is not None:
+            # board_occ_peak (the hand was clearly over the board) gates the hand_exit
+            # detection below. The contour-based motor_onset is the hand-entry mark.
+            self.board_occ_peak = max(self.board_occ_peak, board_occ)
+        return board_occ
+
+    ## Surgical per-frame trace of the touch / hand_exit signals from the REAL code
+    # (EEHA_TRACE_TOUCH=1). Run a narrow window with --start_frame/--end_frame.
+    def _traceTouch(self, capture_idx, phase):
+        if not TRACE_TOUCH:
+            return
+        occ = self.last_occlusion_measure
+        fT = f"{occ[0]:.2f}" if occ is not None else "  - "
+        fC = f"{occ[1]:.2f}" if occ is not None else "  - "
+        bo = f"{self.last_board_occ:.3f}" if self.last_board_occ is not None else "  -  "
+        grid = 'ref' if getattr(self.board_handler, 'grid_from_reference', False) \
+               else ('cont' if self.board_handler.cell_matrix is not None else 'none')
+        log(f"[TRACE {phase:11s} {capture_idx}] act={int(self.target_tracking_active)} "
+            f"H={int(self.board_handler.homography is not None)} cont={int(self.board_handler.contour_detected_raw)} "
+            f"grid={grid:>4s} fT={fT} fC={fC} tcnt={self.target_occlusion_counter} "
+            f"bocc={bo} bpeak={self.board_occ_peak:.3f} bexit={self.board_occ_exit_streak} "
+            f"touch={'Y' if 'target_touch_capture' in self.board_metrics_now else '.'} "
+            f"hexit={'Y' if 'hand_exit_capture' in self.board_metrics_now else '.'}")
 
     ## Keys of board_metrics that are not color counters
     METADATA_KEYS = ('init_capture', 'end_capture', 'early_init_capture', 'motor_onset_capture',
                      'target_touch_capture', 'hand_exit_capture', 'sequence', 'trial_id', 'status',
-                     'target_cord', 'target_norm_coord', 'transition_error', 'missing_trial_error')
+                     'target_cord', 'target_norm_coord', 'transition_error', 'missing_trial_error',
+                     'touch_diag', 'hand_exit_source')
+
+    ## Derives, from the in-memory occlusion series, WHY the target touch was (not)
+    # detected, so the fallbacks can be targeted and the misses measured. Pure
+    # post-processing of cheap scalars already gathered this trial; stored as a small
+    # dict in board_metrics (not the full series). Reasons:
+    #   confirmed        - touch was detected
+    #   few_arucos       - grid (cell_matrix) missing part of the window: no homography
+    #                      enough to place the ROI -> white-grid fallback territory (A.1)
+    #   never_activated  - tracking never latched (panel sweep / contour never clean)
+    #   fT_below         - signal stayed below the occlusion threshold (reach geometry:
+    #                      the hand did not occlude the target ROI, A.2)
+    #   control_ge       - target crossed the threshold but never separated from control
+    #                      (arm occludes control cells as much as the target, A.3)
+    #   unconfirmed      - crossed both but not for enough consecutive frames
+    def _deriveTouchDiagnostics(self, metrics):
+        series = self.occlusion_series
+        confirmed = 'target_touch_capture' in metrics
+        active = [s for s in series if s[4] and s[1] is not None]
+        n_active = len(active)
+        frac_grid_missing = (sum(1 for s in series if not s[3]) / len(series)) if series else 0.0
+        max_fT = max((s[1] for s in active), default=0.0)
+        max_sep = max((s[1] - s[2] for s in active), default=0.0)
+        thr = self.touch_threshold
+        if confirmed:
+            reason = 'confirmed'
+        elif n_active == 0:
+            reason = 'few_arucos' if frac_grid_missing > 0.5 else 'never_activated'
+        elif max_fT <= thr:
+            reason = 'fT_below'
+        elif max_sep <= self.target_occlusion_separation:
+            reason = 'control_ge'
+        else:
+            reason = 'unconfirmed'
+        metrics['touch_diag'] = {'reason': reason,
+                                 'max_fT': round(max_fT, 3),
+                                 'max_sep': round(max_sep, 3),
+                                 'n_active': n_active,
+                                 'n_watched': len(series),
+                                 'frac_grid_missing': round(frac_grid_missing, 3),
+                                 'board_occ_peak': round(self.board_occ_peak, 3)}
 
     """
         Drops gaze samples recorded after end_frame and rebuilds the per color/shape
@@ -648,11 +889,22 @@ class StateMachine:
     def trimTrialToFrame(self, metrics, end_frame):
         if 'sequence' not in metrics:
             return
-        metrics['sequence'] = [s for s in metrics['sequence'] if s['frame'] <= end_frame]
+        # Trim search/pre_start gaze to the trial end; KEEP the 'motor' samples (reach +
+        # withdrawal, recorded after end_frame in motor_recovery) so the trajectory CSV
+        # carries the motor/withdraw phases. Only 'execution' samples feed the counters.
+        metrics['sequence'] = [s for s in metrics['sequence']
+                               if s['frame'] <= end_frame or s.get('phase') == 'motor']
         for key in [k for k in metrics.keys() if k not in self.METADATA_KEYS]:
             del metrics[key]
+        # Per-colour search counters: gaze from the start UP TO THE TOUCH (the user-level
+        # trial end). That is the 'execution' gaze (search/verification, up to the border
+        # crossing) PLUS the 'motor' reach gaze up to the touch frame. Gaze after the touch
+        # (withdrawal) and the pre_start/on_panel/blank gaze do NOT count.
+        touch = metrics.get('target_touch_capture')
         for s in metrics['sequence']:
-            if s.get('phase', 'execution') != 'execution':
+            phase = s.get('phase', 'execution')
+            counts = (phase == 'execution') or (phase == 'motor' and touch is not None and s['frame'] <= touch)
+            if not counts:
                 continue
             if s['color'] not in metrics:
                 metrics[s['color']] = {s['shape']: {True: 0, False: 0}}
@@ -678,19 +930,28 @@ class StateMachine:
                 self.board_metrics_now[color][shape] = {True: 0, False: 0}
             self.board_metrics_now[color][shape][slot] += 1
 
+        # board projection may be unknown for off-board/panel gaze recorded before the
+        # board pose is solved: store a null normalized coord rather than dropping the sample
+        norm_board_coord = (self.board_handler.getPixelBoardNorm(corrected_coord.tolist()).tolist()
+                            if corrected_coord is not None else [None, None])
         self.board_metrics_now['sequence'].append({'color': color,
                                                    'shape': shape,
                                                    'slot': slot,
                                                    'frame': capture_idx,
                                                    'phase': phase,
                                                    'board_coord': list(board_coord),
-                                                   'norm_board_coord': self.board_handler.getPixelBoardNorm(corrected_coord.tolist()).tolist()})
+                                                   'norm_board_coord': norm_board_coord})
 
     """
         Gaze during the panel removal window: the board pose may be known (arucos +
-        session reference grid) before the full border is visible. Samples on board
-        cells are stored with phase pre_start; samples over the sample panel polygon
-        or over blank white (panel still covering that area) are discarded.
+        session reference grid) before the full border is visible. EVERY sample is
+        recorded so analysts get the complete pre-trial view and filter by phase:
+          on_panel  - over the sample-panel polygon (looking at the cue)
+          not_board - off the board entirely
+          blank     - on a board cell still covered by the panel (flat white)
+          pre_start - on an exposed board cell (counts once the start is backdated)
+        Only pre_start (exposed cell) can later be relabeled to execution and feed the
+        per-colour counters; the other three never increment them.
     """
     def processEarlyGaze(self, capture_idx, desnormalized_coord_list):
         if not desnormalized_coord_list:
@@ -699,21 +960,25 @@ class StateMachine:
 
         for coordinates in desnormalized_coord_list:
             und_coord = self.distortion_handler.correctCoordinates(coordinates, homography=None)[0]
+            coord_info = self.board_handler.getPixelInfo([coordinates])
+            info = coord_info[0] if coord_info else ('not_board', 'not_board', False, [-1, -1], None)
+            color, shape, slot, board_coord, corrected_coord = info
 
             if panel_polygon is not None and \
                cv.pointPolygonTest(panel_polygon, (float(und_coord[0]), float(und_coord[1])), False) >= 0:
+                self.recordGazeSample(capture_idx, 'on_panel', 'on_panel', False, [-1, -1], corrected_coord, phase='on_panel')
                 self.gaze_classification.append((und_coord, 'on_panel'))
                 continue
 
-            coord_info = self.board_handler.getPixelInfo([coordinates])
-            if not coord_info or coord_info[0][0] == 'not_board':
+            if color == 'not_board':
+                self.recordGazeSample(capture_idx, 'not_board', 'not_board', False, [-1, -1], corrected_coord, phase='not_board')
                 self.gaze_classification.append((und_coord, 'not_board'))
                 continue
 
-            color, shape, slot, board_coord, corrected_coord = coord_info[0]
             if self.board_handler.isRegionBlank(corrected_coord):
-                # Flat white where a piece or slot outline should be visible: the
-                # panel (or another blank surface) is covering this area
+                # Flat white where a piece or slot outline should be visible: the panel
+                # (or another blank surface) still covers this cell. Keep the cell id.
+                self.recordGazeSample(capture_idx, color, shape, slot, board_coord, corrected_coord, phase='blank')
                 self.gaze_classification.append((und_coord, 'blank'))
                 continue
 
@@ -755,7 +1020,16 @@ class StateMachine:
             self.current_state = "test_finish_execution"
             return
 
-        self.board_handler.step(undistorted_image, self.corners, self.ids)
+        self.board_handler.step(undistorted_image, self.corners, self.ids,
+                                panel_polygon=self.panel_handler.getPanelPolygon())
+
+        # Keep recording the gaze trajectory through the motor phase (reach + withdrawal),
+        # tagged 'motor' so it joins the sequence CSV (phases motor/withdraw) but does NOT
+        # enter the per-colour search counters. The board is occluded by the hand here, so
+        # the cell is the board-layout cell under the gaze, not necessarily visible.
+        for coord_data in self.board_handler.getPixelInfo(desnormalized_coord_list):
+            color, shape, slot, board_coord, corrected_coord = coord_data
+            self.recordGazeSample(capture_idx, color, shape, slot, board_coord, corrected_coord, phase='motor')
 
         # Watch the target touch through the motor phase (the hand is over the board now).
         had_touch = 'target_touch_capture' in self.board_metrics_now
@@ -769,6 +1043,46 @@ class StateMachine:
             self.motor_recovery_misses = 0
         touched = 'target_touch_capture' in self.board_metrics_now
 
+        ## hand_exit source 1 (v1.2.0): the LOCAL target occlusion (fT) returning to
+        # baseline. More sensitive than the whole-board occlusion for small reaches (a
+        # finger over one cell). Requires fT to have clearly risen first (a real reach).
+        if self.last_occlusion_measure is not None and 'hand_exit_capture' not in self.board_metrics_now:
+            fT = self.last_occlusion_measure[0]
+            self.ft_peak = max(self.ft_peak, fT)
+            if self.ft_peak >= self.ft_enter_level:
+                if fT <= self.ft_exit_level:
+                    if self.ft_exit_streak == 0:
+                        self.ft_exit_start_frame = capture_idx
+                    self.ft_exit_streak += 1
+                else:
+                    self.ft_exit_streak = 0
+                if self.ft_exit_streak >= self.ft_exit_confirm:
+                    self.board_metrics_now['hand_exit_capture'] = self.ft_exit_start_frame
+                    self.board_metrics_now['hand_exit_source'] = 'ft_return'
+                    self.current_state = "test_finish_execution"
+                    return
+
+        ## hand_exit source 2: the whole-board occlusion returning to baseline. Unlike
+        # the contour path below, it stays high mid-reach (the hand is in the centre), so
+        # its sustained return is the hand actually leaving even when no touch was
+        # detected. Requires the board to have been clearly occluded first (peak). Falls
+        # back to the contour path when the board pose is unavailable (board_occ is None).
+        board_occ = self._trackBoardOcclusion(capture_idx)
+        self._traceTouch(capture_idx, 'motor_recov')
+        if board_occ is not None and self.board_occ_peak >= self.board_occ_enter_level:
+            if board_occ <= self.board_occ_exit_level:
+                if self.board_occ_exit_streak == 0:
+                    self.board_occ_exit_start_frame = capture_idx
+                self.board_occ_exit_streak += 1
+            else:
+                self.board_occ_exit_streak = 0
+            if self.board_occ_exit_streak >= self.board_occ_exit_confirm \
+               and 'hand_exit_capture' not in self.board_metrics_now:
+                self.board_metrics_now['hand_exit_capture'] = self.board_occ_exit_start_frame
+                self.board_metrics_now['hand_exit_source'] = 'board_occ'
+                self.current_state = "test_finish_execution"
+                return
+
         if self.board_handler.contour_detected_raw:
             if self.motor_recovery_streak == 0:
                 self.motor_recovery_exit_frame = capture_idx
@@ -780,6 +1094,7 @@ class StateMachine:
             if self.motor_recovery_streak >= self.motor_recovery_confirm and touched \
                and 'hand_exit_capture' not in self.board_metrics_now:
                 self.board_metrics_now['hand_exit_capture'] = self.motor_recovery_exit_frame
+                self.board_metrics_now['hand_exit_source'] = 'contour'
                 self.current_state = "test_finish_execution"
         elif self.motor_recovery_streak > 0:
             # Tolerate brief contour flicker as the hand withdraws: only reset the
@@ -795,6 +1110,7 @@ class StateMachine:
         if capture_idx >= self.motor_recovery_deadline:
             if 'hand_exit_capture' not in self.board_metrics_now and self.motor_recovery_streak > 0:
                 self.board_metrics_now['hand_exit_capture'] = self.motor_recovery_exit_frame
+                self.board_metrics_now['hand_exit_source'] = 'deadline'
             self.current_state = "test_finish_execution"
 
     def test_finish_execution_state(self, undistorted_image, capture_idx, desnormalized_coord_list):
@@ -809,6 +1125,7 @@ class StateMachine:
         self.board_metrics_now['end_capture'] = end_capture
         self.trimTrialToFrame(self.board_metrics_now, end_capture)
         self.board_metrics_now['status'] = status
+        self._deriveTouchDiagnostics(self.board_metrics_now)
         self.board_metrics_store[(self.block_id, self.trial_id)] = {f"{self.current_test_key['color']}_{self.current_test_key['shape']}": copy.deepcopy(self.board_metrics_now)}
         self.board_metrics_store['latest'] = self.board_metrics_store[(self.block_id, self.trial_id)]
         self.resetTrialTracking()
@@ -827,10 +1144,21 @@ class StateMachine:
         self.target_occlusion_start_frame = None
         self.target_warmup_end = None
         self.target_tracking_active = False
+        self.target_is_warm = False
+        self.touch_threshold = self.target_occlusion_threshold
         self.motor_recovery_deadline = None
         self.motor_recovery_streak = 0
         self.motor_recovery_misses = 0
         self.motor_recovery_exit_frame = None
+        self.board_occ_active = False
+        self.board_occ_peak = 0.0
+        self.board_occ_exit_streak = 0
+        self.board_occ_exit_start_frame = None
+        self.last_board_occ = None
+        self.ft_peak = 0.0
+        self.ft_exit_streak = 0
+        self.ft_exit_start_frame = None
+        self.occlusion_series = []
         self.board_contour_nondetected_counter = 0
         self.board_contour_detected_counter = 0
         self.contour_streak_start_frame = None
@@ -850,6 +1178,7 @@ class StateMachine:
                 # distinctive status (the recording may have stopped before the
                 # motor response was completed)
                 self.board_metrics_now['status'] = 'test_finish_by_end_of_video'
+                self._deriveTouchDiagnostics(self.board_metrics_now)
                 key = f"{self.current_test_key['color']}_{self.current_test_key['shape']}"
             else:
                 key = f"end_of_video_error_{self.current_test_key['color']}_{self.current_test_key['shape']}"
@@ -884,7 +1213,7 @@ class StateMachine:
         self.board_metrics_store.pop('latest', None)
 
         gaze_sampling_rate = getattr(self.eye_data_handler, 'gaze_sampling_rate', None)
-        data_store = {'sw_version': __version__, 'video_fps': video_fps, 'gaze_sampling_rate': gaze_sampling_rate, 'participant_id': participant_id, 'frames_info': self.frame_data_store, 'fixations_info': self.fixation_data_store, 'trials_data': self.board_metrics_store}
+        data_store = {'sw_version': __version__, 'video_fps': video_fps, 'gaze_sampling_rate': gaze_sampling_rate, 'participant_id': participant_id, 'frames_info': self.frame_data_store, 'fixations_info': self.fixation_data_store, 'trials_data': self.board_metrics_store, 'state_transitions': self.state_transitions}
         with open(os.path.join(output_path,f'data_{participant_id}.pkl'), 'wb') as f:
             pickle.dump(data_store, f)
         
@@ -896,29 +1225,43 @@ class StateMachine:
         # Two blocks of columns: derived per-phase durations (convenient) and the raw
         # event frames in the World video (so any analysis can recompute its own
         # intervals / pick its own trial-end point). Empty when the event was not seen.
+        # v1.2.0 clean model: the trial is RE-BASED to start at the search onset (panel
+        # removal / first board gaze), not the full-board contour confirmation, so
+        # trial_duration_s INCREASES vs v1.0/v1.1 (not comparable -- by design). Marks
+        # are anchored on the homography+occlusion. New per-phase durations and
+        # covariates (anticipation, reach distance) are added for the analysis team.
         csv_data.append(['block_index', 'trial_index', 'trial_name', 'Color', 'Shape', 'Piece Fixations', 'Slot only Fixations',
-                         'trial_duration_s', 'early_start_duration_s', 'time_to_target_s', 'search_duration_s', 'motor_duration_s',
-                         'frame_early_init', 'frame_init', 'frame_target_found', 'frame_motor_onset', 'frame_target_touch', 'frame_hand_exit', 'frame_end',
+                         'trial_duration_s', 'early_start_duration_s', 'time_to_target_s', 'search_duration_s', 'reach_duration_s', 'withdraw_duration_s',
+                         'frame_search_start', 'frame_init', 'frame_target_found', 'frame_motor_onset', 'frame_target_touch', 'frame_hand_exit', 'frame_end',
+                         'anticipatory_gaze', 'anticipation_lead_s', 'target_row', 'target_col',
                          'Finish Status'])
         csv_data_seq.append(['block_index', 'trial_index', 'trial_name', 'Color', 'Shape', 'Piece=1/Slot=0', 'Phase', 'Frame_N', 'trial_duration_s', 'Board Coord', 'Board norm Coord', 'Finish Status'])
+        # Behavioural marks collected per trial; merged with the state transitions below
+        # into ONE chronological timeline (the unified events CSV the analysts asked for).
+        mark_events = []
         for block_id, trial_id in sorted(self.board_metrics_store.keys()):
             trial_metric = self.board_metrics_store[(block_id, trial_id)]
             board_metrics = list(trial_metric.values())[0]
             board_test_name = list(trial_metric.keys())[0]
             if not 'init_capture' in board_metrics or not 'end_capture' in board_metrics:
                 continue
-            duration_s = (board_metrics['end_capture']-board_metrics['init_capture'])/self.video_fps
             init_capture = board_metrics['init_capture']
             end_capture = board_metrics['end_capture']
-            # Search starts when the participant first looks at the board, which may be
-            # during the panel removal (early gaze), not at the full-board start
+            # RE-BASED start: the trial begins at the search onset -- the first board
+            # gaze during the panel removal (early gaze) -- or the full-board start if
+            # there was no anticipatory gaze. trial_duration is measured from here.
             search_start = board_metrics.get('early_init_capture', init_capture)
-            motor_onset = board_metrics.get('motor_onset_capture')
-            # Time with gaze already on the board during the panel removal, before the
-            # formal full-board start (pre_start phase samples)
-            early_duration_s = 0
+            duration_s = (end_capture-search_start)/self.video_fps
+            motor_onset = board_metrics.get('motor_onset_capture')          # hand crosses the board border (contour)
+            reach_onset = motor_onset
+            touch = board_metrics.get('target_touch_capture')
+            hand_exit = board_metrics.get('hand_exit_capture')
+            # Anticipation covariate: gaze already on the board while the sample panel was
+            # still being removed (pre_start samples), and how early it started.
+            anticipatory_gaze = sum(1 for s in board_metrics.get('sequence', []) if s.get('phase') == 'pre_start')
+            anticipation_lead_s = 0
             if 'early_init_capture' in board_metrics:
-                early_duration_s = max(0, (init_capture-board_metrics['early_init_capture'])/self.video_fps)
+                anticipation_lead_s = max(0, (init_capture-board_metrics['early_init_capture'])/self.video_fps)
             # First gaze on the target cell (when it was first found with the eyes).
             # target_cord is [row,col]; sequence board_coord is [col,row]
             first_target_frame = None
@@ -930,37 +1273,76 @@ class StateMachine:
                         first_target_frame = step['frame']
                         break
             time_to_target_s = '' if first_target_frame is None else max(0, (first_target_frame-search_start)/self.video_fps)
-            # Search time (look at board until the hand enters) and motor/reach time
-            # (hand enters until the touch). Empty when the motor onset was not seen.
-            search_duration_s, motor_duration_s = '', ''
-            if motor_onset is not None:
-                search_duration_s = max(0, (motor_onset-search_start)/self.video_fps)
-                motor_duration_s = max(0, (end_capture-motor_onset)/self.video_fps)
+            # Per-phase durations (clean model): search (board gaze until the hand is over
+            # the board), reach (hand over board until the touch), withdraw (touch until
+            # the hand leaves). Empty when the bounding mark was not observed.
+            search_duration_s, reach_duration_s, withdraw_duration_s = '', '', ''
+            if reach_onset is not None:
+                search_duration_s = max(0, (reach_onset-search_start)/self.video_fps)
+            if reach_onset is not None and touch is not None:
+                reach_duration_s = max(0, (touch-reach_onset)/self.video_fps)
+            if touch is not None and hand_exit is not None:
+                withdraw_duration_s = max(0, (hand_exit-touch)/self.video_fps)
+            # Target position (row 0 = far/top, board_size[1]-1 = near/bottom; col 0..7).
+            # The reach DISTANCE (mm) is a fixed property of the cell (same for every
+            # participant), so it is NOT repeated here: it lives in the per-board reference
+            # CSV target_geometry.csv (join by trial_name / row,col). See docs.
+            target_row, target_col = '', ''
+            if target_cord and target_cord[0] is not None:
+                target_row, target_col = int(target_cord[0]), int(target_cord[1])
+
+            # Behavioural marks of this trial as point events, to be interleaved with the
+            # state transitions in the unified timeline. Skipped when not observed; the
+            # missing_trial_error placeholders (init/end = -1) carry no real frames.
+            if end_capture != -1 and init_capture != -1:
+                for mark_name, mark_frame in [('search_start', search_start),
+                                              ('target_found', first_target_frame),
+                                              ('motor_onset', motor_onset),
+                                              ('target_touch', touch),
+                                              ('hand_exit', hand_exit),
+                                              ('trial_end', end_capture)]:
+                    if mark_frame is None or mark_frame == '':
+                        continue
+                    mark_events.append({'block': block_id, 'trial': trial_id, 'trial_name': board_test_name,
+                                        'frame': mark_frame, 'event': mark_name,
+                                        'from_state': '', 'to_state': ''})
 
             # Cognitive phase of a given gaze frame, for the sequence CSV
+            # Cognitive/motor phase of each gaze sample. The phase boundaries ARE the event
+            # marks, so the Phase column alone encodes them (no need to repeat the frames):
+            #   pre_start    (gaze during panel removal)
+            #   search       (looking, target not yet found)  -> verification at target_found
+            #   verification (target found, hand not yet in)  -> motor at motor_onset
+            #   motor        (hand reaching the piece)         -> withdraw at the touch
+            #   withdraw     (after the touch, hand leaving)   -> trial closes at hand_exit
+            # The motor/withdraw gaze is recorded through the motor-recovery window.
             def phaseOf(frame, base_phase):
-                if base_phase == 'pre_start':
-                    return 'pre_start'
-                if motor_onset is not None and frame >= motor_onset:
+                # Early-window location tags (on_panel/blank/not_board) and pre_start are
+                # kept as-is; only the temporal execution samples are split by the marks.
+                if base_phase in ('pre_start', 'on_panel', 'blank', 'not_board'):
+                    return base_phase
+                if touch is not None and frame >= touch:
+                    return 'withdraw'
+                if reach_onset is not None and frame >= reach_onset:
                     return 'motor'
                 if first_target_frame is not None and frame >= first_target_frame:
                     return 'verification'
                 return 'search'
 
             # Raw event frames (empty string when the event was not observed)
-            f_early = board_metrics.get('early_init_capture', '')
             f_target = first_target_frame if first_target_frame is not None else ''
             f_motor = motor_onset if motor_onset is not None else ''
-            f_touch = board_metrics.get('target_touch_capture', '')
-            f_exit = board_metrics.get('hand_exit_capture', '')
+            f_touch = touch if touch is not None else ''
+            f_exit = hand_exit if hand_exit is not None else ''
 
             for color, color_item in board_metrics.items():
                 if color in self.METADATA_KEYS:
                     continue
                 for shape, shape_item in color_item.items():
                     csv_data.append([block_id, trial_id, board_test_name, color, shape, shape_item[True], shape_item[False],
-                                     duration_s, early_duration_s, time_to_target_s, search_duration_s, motor_duration_s,
-                                     f_early, init_capture, f_target, f_motor, f_touch, f_exit, end_capture,
+                                     duration_s, anticipation_lead_s, time_to_target_s, search_duration_s, reach_duration_s, withdraw_duration_s,
+                                     search_start, init_capture, f_target, f_motor, f_touch, f_exit, end_capture,
+                                     anticipatory_gaze, anticipation_lead_s, target_row, target_col,
                                      board_metrics['status']])
 
             for step in board_metrics['sequence']:
@@ -984,6 +1366,37 @@ class StateMachine:
         
         with open(os.path.join(output_path,f'trials_data_{participant_id}_sequence.csv'), mode="w", newline="") as file:
             csv.writer(file).writerows(csv_data_seq)
+
+        ## CSV unified timeline: state transitions AND behavioural marks (target_found,
+        # motor_onset, target_touch, hand_exit, trial_end, search_start) interleaved in
+        # ONE chronological table per trial. Each row carries the exact World frame, its
+        # time in seconds, the block/trial, and the event:
+        #   - state change -> event='state_change', from_state/to_state filled
+        #   - mark         -> event=<mark name>, from_state/to_state empty
+        # Filter event=='state_change' for the pure state machine, or the mark names for
+        # the behavioural marks; read all rows (sorted by frame) for the full timeline.
+        fps = video_fps or self.video_fps
+        name_by_trial = {key: list(tm.keys())[0] for key, tm in self.board_metrics_store.items()}
+        events = list(mark_events)
+        for t in self.state_transitions:
+            events.append({'block': t['block'], 'trial': t['trial'], 'trial_name': t['trial_name'],
+                           'frame': t['frame'], 'event': 'state_change',
+                           'from_state': t['from_state'], 'to_state': t['to_state']})
+        # Stable chronological order within each trial (None block/trial sort first)
+        events.sort(key=lambda e: (e['block'] if e['block'] is not None else -1,
+                                   e['trial'] if e['trial'] is not None else -1,
+                                   e['frame']))
+        csv_transitions = [['block_index', 'trial_index', 'trial_name', 'frame', 'time_s',
+                            'event', 'from_state', 'to_state']]
+        for e in events:
+            block = '' if e['block'] is None else e['block']
+            trial = '' if e['trial'] is None else e['trial']
+            name = e['trial_name'] or name_by_trial.get((e['block'], e['trial']), '')
+            time_s = round(e['frame'] / fps, 3) if fps else ''
+            csv_transitions.append([block, trial, name, e['frame'], time_s,
+                                    e['event'], e['from_state'], e['to_state']])
+        with open(os.path.join(output_path,f'trials_data_{participant_id}_transitions.csv'), mode="w", newline="") as file:
+            csv.writer(file).writerows(csv_transitions)
 
         terminal_log = self.print_results()
         with open(os.path.join(output_path,f'result_log_{participant_id}.txt'), 'w') as file:

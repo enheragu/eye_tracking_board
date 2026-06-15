@@ -41,6 +41,31 @@ def discoverVersionRoots(base):
     return sorted(r for r in roots if os.path.isdir(r))
 
 
+def writeTargetGeometry(cfg_path, out_path):
+    """Per-board geometry REFERENCE table (one row per cell): position in the grid and on
+    the metric board plane (mm), and the reach distance from the participant entry side
+    (bottom-centre). It is a property of the BOARD, identical for every participant, so it
+    is published ONCE here instead of being repeated on every trial row. Join it to the
+    trials by trial_name (= color_shape of the target piece) or by target_row/target_col."""
+    import csv as _csv
+    import math as _math
+    import yaml as _yaml
+    cfg = _yaml.safe_load(open(cfg_path))
+    bs, bs_mm, board = cfg['board_size'], cfg['board_size_mm'], cfg['board_config']
+    rows = [['trial_name', 'color', 'shape', 'is_piece', 'target_row', 'target_col',
+             'target_x_mm', 'target_y_mm', 'reach_distance_mm']]
+    for key, (color, shape, is_piece) in board.items():
+        col, row = (int(x) for x in key.split(','))    # cfg key is 'col,row'
+        tx = (col + 0.5) / bs[0] * bs_mm[0]
+        ty = (row + 0.5) / bs[1] * bs_mm[1]
+        dist = round(_math.hypot(tx - bs_mm[0] / 2.0, ty - bs_mm[1]), 1)
+        rows.append([f'{color}_{shape}', color, shape, is_piece, row, col,
+                     round(tx, 1), round(ty, 1), dist])
+    with open(out_path, 'w', newline='') as f:
+        _csv.writer(f).writerows(rows)
+    return len(rows) - 1
+
+
 def main():
     parser = argparse.ArgumentParser(description='Produce all team artefacts from the processing outputs')
     parser.add_argument('--roots', nargs='+', default=None,
@@ -66,8 +91,17 @@ def main():
     if os.path.isdir(topic_dir):
         n1 = combineCsvs(topic_dir, 'trials_data_{}.csv', os.path.join(out_dir, f'combined_trials_{args.topic}.csv'))
         n2 = combineCsvs(topic_dir, 'trials_data_{}_sequence.csv', os.path.join(out_dir, f'combined_sequence_{args.topic}.csv'))
+        n3 = combineCsvs(topic_dir, 'trials_data_{}_transitions.csv', os.path.join(out_dir, f'combined_transitions_{args.topic}.csv'))
         print(f"Combined trials CSV: {n1} participants")
         print(f"Combined sequence CSV: {n2} participants")
+        print(f"Combined transitions CSV: {n3} participants")
+
+    # 2b. Per-board geometry REFERENCE table (one row per cell; same for every
+    # participant). Published once so the per-trial CSV need not repeat reach distance.
+    cfg_path = os.path.join(REPO_ROOT, 'cfg', 'game_config.yaml')
+    if os.path.isfile(cfg_path):
+        n_geo = writeTargetGeometry(cfg_path, os.path.join(out_dir, 'target_geometry.csv'))
+        print(f"Target geometry CSV: {n_geo} cells")
 
     # 3-4. HTML report + frequencies CSV (generate_report writes both)
     report_argv = ['--roots', *roots, '--data_root', args.data_root, '-t', args.topic,

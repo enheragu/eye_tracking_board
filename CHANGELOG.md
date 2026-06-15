@@ -4,6 +4,65 @@ All notable changes to this project are documented in this file. Versions prior 
 1.0.0 were reconstructed from the git history. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [1.2.0](https://github.com/enheragu/eye_tracking_board/releases/tag/v1.2.0) - 2026-06-15
+
+Re-based trial model (homography + occlusion) and a complete per-trial timeline. The trial
+now **starts at the search onset** (panel removal / first board gaze) instead of the
+full-board contour confirmation, so `trial_duration_s` **increases** and is **not
+comparable** with 0.x/1.0/1.1 — by design; reprocess the whole cohort with 1.2 and compare
+only within 1.2. All gaze in the trial window is now recorded (tagged by phase), and state
+transitions plus behavioural marks are published as one timeline. Validated on the **22
+participants** (**1296 real trials**): vs 1.1.0 on the 18 common participants, target-touch
+coverage **82.3% → 94.7%**, hand-exit **65.9% → 78.5%**, **+31 net real trials**, and **0
+implausible touches** (none before board appearance or after the hand leaves). Per-session config
+fixes recovered desynced sequences (a re-presented panel left one participant at 10 detected
+trials → **62**); the ArUco fix below removes `few_arucos` failures at the cost of a small
+contour-timing shift (one participant **−3** trials). Detail in the
+[guide](docs/guia_procesamiento.md) and [technical doc](docs/documentacion_tecnica.md).
+
+### Added
+- **Unified per-trial timeline** (`trials_data_<id>_transitions.csv` + the stacked
+  `combined_transitions_<topic>.csv`): every **state change** *and* every **behavioural
+  mark** (`search_start`, `target_found`, `motor_onset`, `target_touch`, `hand_exit`,
+  `trial_end`) interleaved by frame, with `time_s` and the block/trial. The raw state
+  transitions are also stored in `data_<id>.pkl/.yaml` (`state_transitions`).
+- **All gaze recorded, tagged by phase.** The panel-removal gaze that used to be discarded
+  is now kept: `on_panel` (sample panel), `blank` (cell still covered), `not_board` (off
+  board); plus `withdraw` (after the touch, through the motor-recovery window). Analysts
+  filter the phase they want; only `search`/`verification`/`motor`-up-to-touch feed the
+  summary counters.
+- **Re-based trial start** (`frame_search_start`); `frame_init` (full-board confirm) kept as
+  an internal reference. New covariates `anticipatory_gaze`, `anticipation_lead_s` and
+  per-phase durations `search_duration_s` / `reach_duration_s` / `withdraw_duration_s`.
+- **Board geometry reference** (`target_geometry.csv`): per-cell grid/metric position (mm)
+  and Fitts-style `reach_distance_mm`, published once (a board property) instead of repeated
+  on every trial row.
+- Touch/hand-exit robustness: per-colour touch thresholds with warm-target (red/yellow)
+  handling, session clean-board template, edge/Sobel + SSIM change components, and
+  panel-as-occluder masking. `hand_exit` decoupled from the touch (whole-board + local-target
+  occlusion baselines, contour fallback). `scikit-image` added to requirements.
+- **ArUco detection robustness (homography).** Markers are now detected on the **original
+  (distorted)** image and their corners undistorted, instead of detecting on the *undistorted*
+  image. The undistort (`alpha=0`) pushed the edge markers — especially the top row — out of
+  frame and lost them (measured: participant 042 lost markers in **16/16** frames, ~5/frame),
+  weakening the homography and causing `few_arucos` failures. Resolution and gaze projection
+  are unchanged (`newK == K`; recovered corners match to 0.15 px). Recovers precision for
+  participants with marginal ArUco visibility.
+
+### Changed
+- **`trial_duration_s` is re-based and NOT comparable** with previous versions (starts at the
+  search onset, ends at the border crossing).
+- Summary per-colour counts now run **up to the touch** (`search`/`verification`/`motor`
+  before `frame_target_touch`); `withdraw` and the pre-trial gaze are in the sequence CSV but
+  do **not** count.
+- Removed `frame_movement_onset` (redundant with the contour-based `frame_motor_onset`);
+  `reach_distance_mm` moved from the per-trial CSV to `target_geometry.csv`.
+
+### Known limitation
+- Target-touch stays best-effort and does **not** close the trial; a missing touch can be
+  estimated from the motor marks (see the technical doc). The robust trial end is the border
+  crossing (`frame_end`), unaffected by touch misses.
+
 ## [1.1.0](https://github.com/enheragu/eye_tracking_board/releases/tag/v1.1.0) - 2026-06-13
 
 Per-trial event marks (search / motor phases) and a best-effort target-touch detector,

@@ -7,6 +7,7 @@ from collections import deque
 
 import cv2 as cv
 import numpy as np
+from skimage.metrics import structural_similarity as _ssim
 
 import yaml
 from yaml.loader import SafeLoader
@@ -104,14 +105,49 @@ class BoardHandler:
         # (gutters/borders) and its colored pixels, and occlusion is confirmed only
         # when BOTH change (min of the two), so a partial shadow on one does not fire.
         self.target_cell = None
+        self.touch_warm_target = False
         self.control_cells = []
         self.tracking_ref_patches = None
         self.tracking_ref_masks = None  # (white_mask, color_mask) per patch
         self.tracking_ref_hists = None  # colour histogram per patch
         self.last_target_roi = None     # for visualization
         self.last_control_rois = []
+
+        ## Session-level CLEAN board template (v1.2.0). The board pieces are static, so a
+        # clean warped view captured between/within trials (board fully visible, no panel,
+        # no hand) is a valid touch reference for ALL trials -- crucially for EDGE targets
+        # where the hand covers the target from the very start of the trial and there is no
+        # clean per-trial window to capture a reference. Refreshed (blended) whenever the
+        # board is verified clean, to track lighting drift. PERSISTS across trials (not
+        # cleared in clearTargetTracking).
+        self.session_template = None
+        self._template_blend_every = 15   # blend the template every N clean frames only
+        self._template_blend_counter = 0  # (lighting drifts slowly; a full-frame float
+                                          #  blend every frame was needless cost)
+
+        ## Whole-board occlusion baseline (hand_exit detection, v1.2.0). Unlike the
+        # binary border contour -- which reappears MID-reach because the hand is in the
+        # centre and the white frame is visible again (measured ambiguity, see doc) --
+        # a coarse change measure over the WHOLE board area stays high while any large
+        # object (the hand/arm) covers the board, and only returns to baseline when the
+        # hand actually leaves. Its sustained return marks hand_exit independently of
+        # the touch (which is what coupled hand_exit to the touch in v1.1.0). Cheap:
+        # a single 64x36 grayscale diff per frame.
+        self.board_occ_ref = None
+        self.board_occ_size = (64, 36)
+        self.board_occ_diff_threshold = 35  # per-pixel grayscale change to count
+
+        ## Sample-panel mask in warped-board coordinates (v1.2.0). The panel is a KNOWN
+        # occluder while it is being removed (not the hand), so it is excluded from the
+        # border (contour) detection -- letting the border be found from the visible part
+        # as the panel retracts -- and from the hand-occlusion measure (so it neither
+        # fakes hand entry nor contaminates the reference). Projected from the panel
+        # polygon through the board homography each frame; None when no panel is detected.
+        self.panel_mask_warp = None
         self.occlusion_patch_size = (48, 48)  # finer patch for the alignment step
         self.occlusion_pixel_diff_threshold = 60  # sum of |diff| over the 3 channels
+        self.occlusion_edge_threshold = 50        # gradient-magnitude rise = hand texture/edges (warm targets)
+        self.occlusion_ssim_threshold = 0.55      # per-pixel SSIM below this = structure broken (a hand)
         self.occlusion_roi_cells = 1.4  # ROI side in cells (tight enough for signal)
         self.occlusion_min_zone_fraction = 0.10  # ignore white/color zone if scarcer
         self.occlusion_max_align_shift = 10  # max px shift compensated (warp jitter)
@@ -121,9 +157,10 @@ class BoardHandler:
         self.occlusion_hist_threshold = 0.30
         
         
-    def step(self, undistorted_image, corners, ids):
+    def step(self, undistorted_image, corners, ids, panel_polygon=None):
         self.board_view = self.computeApplyHomography(undistorted_image, corners, ids)
-        self.board_contour = self.detectContour(self.board_view)
+        self.panel_mask_warp = self._panelMaskWarp(panel_polygon)
+        self.board_contour = self.detectContour(self.board_view, ignore_mask=self.panel_mask_warp)
         # Raw detection state (before inertia) so trial end can be backdated to the
         # last frame in which the board was actually visible
         self.contour_detected_raw = self.board_contour is not None
@@ -163,6 +200,26 @@ class BoardHandler:
         elif self.board_contour is not None and len(self.board_contour) != 0:
             self.cell_matrix, self.cell_width, self.cell_height = self.computeBoardMatrixFromContour(self.board_contour, self.board_size)
             self.board_data_dict = self.completeBoardConfig(self.cell_matrix, self.cell_width, self.cell_height, self.board_data_dict)
+
+        self.refreshSessionTemplate()
+
+    ## Maintains the session-level clean board template: captures/blends the current
+    # warped view whenever the board is clearly clean (full contour detected this frame
+    # and no panel overlapping it). The slow blend tracks lighting drift; it never
+    # captures while the hand crosses the border (contour lost) or the panel is present.
+    def refreshSessionTemplate(self):
+        if self.board_view is None or not self.contour_detected_raw or self.panel_mask_warp is not None:
+            return
+        if self.session_template is None or self.session_template.shape != self.board_view.shape:
+            self.session_template = self.board_view.astype(np.float32)
+            self._template_blend_counter = 0
+            return
+        # Blend only every N clean frames: lighting drift is slow, and a full-frame float
+        # blend on every frame was the main per-frame cost added in v1.2 (measured).
+        self._template_blend_counter += 1
+        if self._template_blend_counter >= self._template_blend_every:
+            self._template_blend_counter = 0
+            self.session_template = 0.9 * self.session_template + 0.1 * self.board_view.astype(np.float32)
         
 
     def handleVisualization(self, image, board_contour, board_size, cell_matrix, cell_contours, board_data_dict, fixation_coord_list):
@@ -451,8 +508,21 @@ class BoardHandler:
 
         return board_data_dict
 
+    ## Projects the sample-panel polygon (undistorted-image coordinates, from
+    # PanelHandler.getPanelPolygon) into the warped board view, as a filled mask. Used
+    # to exclude the panel (a known occluder) from the border detection and the hand
+    # occlusion. Returns None when there is no panel or no homography this frame.
+    def _panelMaskWarp(self, panel_polygon):
+        if panel_polygon is None or self.homography is None or self.board_view is None:
+            return None
+        pts = cv.perspectiveTransform(np.asarray(panel_polygon, np.float32).reshape(-1, 1, 2),
+                                      self.homography).reshape(-1, 2)
+        mask = np.zeros(self.board_view.shape[:2], np.uint8)
+        cv.fillPoly(mask, [pts.astype(np.int32)], 255)
+        return mask if mask.any() else None
+
     ## FUNCTIONS BASED ON DETECTION OVER IMAGE
-    def detectContour(self, image):
+    def detectContour(self, image, ignore_mask=None):
         hsv_image = cv.cvtColor(image, cv.COLOR_BGR2HSV_FULL)
         hue, sat, intensity = cv.split(hsv_image)
 
@@ -493,6 +563,11 @@ class BoardHandler:
         h_ref_deg = mean_h * 360.0 / 255.0
         h_eps_deg = 4 * std_h * 360.0 / 255.0
         res = getMaskHue(hue, sat, intensity, h_ref=h_ref_deg, h_epsilon=h_eps_deg, s_margins=s_margins, v_margins = v_margins)
+        # Exclude the sample panel (known occluder while it is being removed): its white
+        # back would otherwise be taken as board border and break the rectangle, or
+        # delay the border detection until it has fully cleared the edge.
+        if ignore_mask is not None:
+            res[ignore_mask > 0] = 0
         # cv.imshow(f'border_mask', res)
 
         edge_image = cv.Canny(res, threshold1=50, threshold2=200)
@@ -558,9 +633,11 @@ class BoardHandler:
             return None
         return (x0, y0, x1, y1)
 
-    def _extractPatch(self, roi):
+    def _extractPatch(self, roi, source=None):
+        if source is None:
+            source = self.board_view
         x0, y0, x1, y1 = roi
-        patch = cv.resize(self.board_view[y0:y1, x0:x1], self.occlusion_patch_size, interpolation=cv.INTER_AREA)
+        patch = cv.resize(source[y0:y1, x0:x1], self.occlusion_patch_size, interpolation=cv.INTER_AREA)
         return cv.GaussianBlur(patch, (3, 3), 0).astype(np.float32)
 
     """
@@ -569,10 +646,16 @@ class BoardHandler:
         from the target whose median change estimates the global variation. The
         reference patches are captured on the first getTargetOcclusionMeasure call.
     """
-    def initTargetTracking(self, target_cell):
+    def initTargetTracking(self, target_cell, target_color=None):
         self.clearTargetTracking()
         if target_cell is None or target_cell[0] is None or self.cell_matrix is None:
             return
+        # Per-target detection profile (v1.2): for WARM targets (red/yellow ~ skin hue)
+        # the colour-composition gate (GATE 1) cannot tell a warm-toned hand from the
+        # warm piece, so it wrongly suppresses the touch (measured: row4 red/yellow ~62%
+        # vs blue 87%). For those we de-weight GATE 1 and rely on the brightness/texture
+        # change (GATE 2) + the control separation. Cool targets keep GATE 1 (it works).
+        self.touch_warm_target = str(target_color) in ('red', 'yellow')
         self.target_cell = (int(target_cell[0]), int(target_cell[1]))
         rows, cols = self.board_size[1], self.board_size[0]
         candidates = [(0, 0), (0, cols-1), (rows-1, 0), (rows-1, cols-1), (rows//2, cols//2)]
@@ -581,12 +664,52 @@ class BoardHandler:
 
     def clearTargetTracking(self):
         self.target_cell = None
+        self.touch_warm_target = False
         self.control_cells = []
         self.tracking_ref_patches = None
         self.tracking_ref_masks = None
         self.tracking_ref_hists = None
         self.last_target_roi = None
         self.last_control_rois = []
+        self.board_occ_ref = None
+
+    """
+        Coarse fraction of the board area that changed vs a clean reference captured
+        on the first call (trial start, board clear). The hand/arm over the board
+        keeps this high through the whole reach -- including mid-reach, when the border
+        contour misleadingly reappears -- so its sustained return to baseline is a
+        robust hand_exit signal that does NOT depend on the touch. Returns None when
+        the board pose/grid is not available this frame (few ArUcos): the caller then
+        falls back to the contour-based logic. A 64x36 grayscale diff: negligible cost.
+    """
+    def getBoardOcclusionMeasure(self):
+        if self.board_view is None or self.homography is None \
+           or self.board_origin is None or self.board_width is None or self.board_height is None:
+            return None
+        x, y = int(self.board_origin[0]), int(self.board_origin[1])
+        x0, y0 = max(0, x), max(0, y)
+        x1 = min(self.board_view.shape[1], x + int(self.board_width))
+        y1 = min(self.board_view.shape[0], y + int(self.board_height))
+        if x1 - x0 < 8 or y1 - y0 < 8:
+            return None
+        small = cv.resize(self.board_view[y0:y1, x0:x1], self.board_occ_size, interpolation=cv.INTER_AREA)
+        gray = cv.GaussianBlur(cv.cvtColor(small, cv.COLOR_BGR2GRAY), (3, 3), 0).astype(np.float32)
+        if self.board_occ_ref is None:
+            self.board_occ_ref = gray
+            return 0.0
+        changed = np.abs(gray - self.board_occ_ref) > self.board_occ_diff_threshold
+        # Exclude the sample panel (known occluder): it must not count as hand occlusion.
+        if self.panel_mask_warp is not None:
+            pm = cv.resize(self.panel_mask_warp[y0:y1, x0:x1], self.board_occ_size,
+                           interpolation=cv.INTER_NEAREST) > 0
+            valid = ~pm
+            frac = float(changed[valid].mean()) if valid.any() else 0.0
+        else:
+            frac = float(changed.mean())
+        # Absorb slow lighting drift only while the scene is calm (never while occluded)
+        if frac < 0.03:
+            self.board_occ_ref = 0.9 * self.board_occ_ref + 0.1 * gray
+        return frac
 
     def _cellRoi(self, cell):
         row, col = cell
@@ -637,17 +760,35 @@ class BoardHandler:
 
         patches = [self._extractPatch(roi) for roi in rois]
         if self.tracking_ref_patches is None:
-            self.tracking_ref_patches = patches
-            self.tracking_ref_masks = [self._segmentPatch(patch) for patch in patches]
-            self.tracking_ref_hists = [self._patchHist(patch) for patch in patches]
-            return (0.0, 0.0)
+            # Prefer the LIVE per-trial reference when THIS frame is clean (contour
+            # detected: the board is visible and the hand is not over it) -- it tracks the
+            # exact current lighting and is the behaviour that already worked on most
+            # trials. Fall back to the SESSION TEMPLATE only when there is no clean window
+            # (edge targets: the hand covers the target from the start, so the contour is
+            # already lost at activation) -- that is exactly where the template rescues the
+            # touch, without disturbing the trials that had a clean window of their own.
+            use_template = (not self.contour_detected_raw) and self.session_template is not None
+            if use_template:
+                ref_src = np.clip(self.session_template, 0, 255).astype(np.uint8)
+                self.tracking_ref_patches = [self._extractPatch(roi, ref_src) for roi in rois]
+            else:
+                self.tracking_ref_patches = patches
+            self.tracking_ref_masks = [self._segmentPatch(patch) for patch in self.tracking_ref_patches]
+            self.tracking_ref_hists = [self._patchHist(patch) for patch in self.tracking_ref_patches]
+            if not use_template:
+                return (0.0, 0.0)
+            # else: fall through and measure the live patches vs the template reference
 
-        def changedFraction(patch, reference, masks, ref_hist):
+        def changedFraction(patch, reference, masks, ref_hist, is_target=False):
             # GATE 1 - colour composition: a real hand brings a new colour into the
             # ROI; a mere warp shift keeps the same colours. If the colour histogram
-            # barely changed, it is a shift, not an occlusion -> 0.
-            if cv.compareHist(ref_hist, self._patchHist(patch), cv.HISTCMP_BHATTACHARYYA) < self.occlusion_hist_threshold:
-                return 0.0
+            # barely changed, it is a shift, not an occlusion -> 0. SKIPPED for warm
+            # targets (red/yellow ~ skin hue): there a warm-toned hand barely changes the
+            # hue histogram, so GATE 1 would wrongly zero a real touch; GATE 2 (brightness
+            # /texture) + the control separation carry the detection instead.
+            if not self.touch_warm_target:
+                if cv.compareHist(ref_hist, self._patchHist(patch), cv.HISTCMP_BHATTACHARYYA) < self.occlusion_hist_threshold:
+                    return 0.0
             # GATE 2 - compensate a small whole-ROI shift before measuring change. The
             # warp jitters a few px between frames (the arucos are detected with slight
             # variation), so the board content "dances" under the fixed ROI; aligning
@@ -666,6 +807,27 @@ class BoardHandler:
                 patch = cv.warpAffine(patch, M, (patch.shape[1], patch.shape[0]), borderMode=cv.BORDER_REFLECT)
             diff = np.abs(patch - reference).sum(axis=2)
             changed = diff > self.occlusion_pixel_diff_threshold
+            # EDGE/TEXTURE variation (v1.2): a hand adds structure (finger edges, shadows,
+            # nail) that a flat painted piece lacks -- a COLOUR-INDEPENDENT cue that catches
+            # a warm hand over a warm piece, where the colour/brightness change is tiny, and
+            # boosts the weak touches of any colour. Applied to the TARGET only (never the
+            # control cells: the arm crossing them adds edges too and would shrink the
+            # target-vs-control separation). For COOL targets GATE 1 already gated above, so
+            # the edge only adds when a colour change is present -> no false positives.
+            if is_target:
+                pat_gray_a = cv.cvtColor(np.clip(patch, 0, 255).astype(np.uint8), cv.COLOR_BGR2GRAY).astype(np.float32)
+                pgrad = cv.magnitude(cv.Sobel(pat_gray_a, cv.CV_32F, 1, 0, ksize=3), cv.Sobel(pat_gray_a, cv.CV_32F, 0, 1, ksize=3))
+                rgrad = cv.magnitude(cv.Sobel(ref_gray, cv.CV_32F, 1, 0, ksize=3), cv.Sobel(ref_gray, cv.CV_32F, 0, 1, ksize=3))
+                changed = changed | ((pgrad - rgrad) > self.occlusion_edge_threshold)
+                # SSIM structural change: a hand breaks the piece's structure -> low SSIM,
+                # robust to noise/lighting and INDEPENDENT of colour (catches warm hands on
+                # warm pieces, where pixel/edge change is small). Low-SSIM pixels = changed.
+                try:
+                    _, smap = _ssim(ref_gray.astype(np.uint8), pat_gray_a.astype(np.uint8),
+                                    full=True, data_range=255)
+                    changed = changed | (smap < self.occlusion_ssim_threshold)
+                except Exception:
+                    pass
             # Change measured separately on the white (gutters) and the colored (piece)
             # pixels of the cell, then averaged. A finger reaching the target covers the
             # colored piece reliably but the white gutters only sometimes; requiring BOTH
@@ -680,8 +842,8 @@ class BoardHandler:
                 return float(changed.mean())
             return float(np.mean(zone_fractions))
 
-        fractions = [changedFraction(patch, ref, masks, ref_hist)
-                     for patch, ref, masks, ref_hist in zip(patches, self.tracking_ref_patches, self.tracking_ref_masks, self.tracking_ref_hists)]
+        fractions = [changedFraction(patch, ref, masks, ref_hist, is_target=(i == 0))
+                     for i, (patch, ref, masks, ref_hist) in enumerate(zip(patches, self.tracking_ref_patches, self.tracking_ref_masks, self.tracking_ref_hists))]
         frac_target = fractions[0]
         frac_control = float(np.median(fractions[1:]))
 
