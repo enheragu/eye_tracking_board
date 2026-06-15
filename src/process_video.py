@@ -52,6 +52,7 @@ parser.add_argument('--debug_log', action='store_true', default=False, help='Ena
 parser.add_argument('--start_frame', type=int, default=0, help='First frame to process (for debugging a specific segment).')
 parser.add_argument('--end_frame', type=int, default=None, help='Last frame to process (for debugging a specific segment).')
 parser.add_argument('--no_window', action='store_true', default=False, help='With -v, record the debug video without opening a window (headless).')
+parser.add_argument('--dump_frames', type=str, default=None, help='Comma-separated WORLD frame numbers: with -v, save the debug render of each (first processed frame >= target) as figframe_<n>.png. For reproducible documentation figures.')
 args = parser.parse_args()
 
 participant_id = args.participant
@@ -154,6 +155,8 @@ def processVideo(video_path):
 
     capture_idx = args.start_frame
     end_limit = total_frames if args.end_frame is None else min(total_frames, args.end_frame + 1)
+    # Reproducible figure dumps: targets pending, in order (first processed frame >= target)
+    dump_targets = sorted(int(x) for x in args.dump_frames.split(',')) if args.dump_frames else []
     if capture_idx > 0:
         # Single seek to the start point; from here on decoding is sequential
         stream.set(cv.CAP_PROP_POS_FRAMES, capture_idx)
@@ -178,6 +181,16 @@ def processVideo(video_path):
                                                                         frame_height=frame_height, participan_id=participant_id)
                 mouse_callback_image = mosaic
                 writer.write(log_frame)
+                # Save the debug render for any requested figure frame (first processed
+                # frame at or past each target), so documentation figures regenerate exactly.
+                while dump_targets and capture_idx >= dump_targets[0]:
+                    target = dump_targets.pop(0)
+                    cv.imwrite(os.path.join(output_path, f'figframe_{target}.png'), log_frame)
+                    # Full-res cenital warp (grid + target/control occlusion ROIs) when available
+                    warp = getattr(state_machine_handler, 'last_pip_view', None)
+                    if warp is not None:
+                        cv.imwrite(os.path.join(output_path, f'figwarp_{target}.png'), warp)
+                    log(f"[processVideo::{participant_id}] Dumped figure frame {target} (at {capture_idx}).")
                 # --no_window only records the debug video (works headless)
                 if not args.no_window:
                     cv.imshow(WINDOW_STREAM_BOARD, mosaic)

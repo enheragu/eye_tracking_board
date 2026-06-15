@@ -5,6 +5,7 @@ numpy
 opencv-contrib-python
 PyYAML
 scikit-learn
+scikit-image
 tabulate
 argparse
 pandas

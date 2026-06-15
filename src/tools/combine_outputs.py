@@ -66,11 +66,14 @@ def main():
 
     trials_out = os.path.join(out_dir, f'combined_trials_{args.topic}.csv')
     seq_out = os.path.join(out_dir, f'combined_sequence_{args.topic}.csv')
+    trans_out = os.path.join(out_dir, f'combined_transitions_{args.topic}.csv')
     n1 = combineCsvs(topic_dir, 'trials_data_{}.csv', trials_out)
     n2 = combineCsvs(topic_dir, 'trials_data_{}_sequence.csv', seq_out)
+    n3 = combineCsvs(topic_dir, 'trials_data_{}_transitions.csv', trans_out)
 
     print(f"Combined per-trial summary of {n1} participants -> {trials_out}")
     print(f"Combined gaze sequence of {n2} participants -> {seq_out}")
+    print(f"Combined state transitions of {n3} participants -> {trans_out}")
     return 0
 
 

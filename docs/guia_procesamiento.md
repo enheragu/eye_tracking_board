@@ -1,21 +1,21 @@
 # Guía de comprensión del procesamiento de datos
 
-> Esta guía es de **usuario**: qué significan las salidas y cómo interpretarlas. El detalle
-> de **cómo funciona por dentro** (algoritmos, máquina de estados, decisiones de
-> ingeniería) está en la [documentación técnica](documentacion_tecnica.md). Los **datos
-> concretos** por participante viven en el informe HTML y los CSV, que se regeneran con
-> cada procesamiento.
+> **▶ Empieza por aquí.** Esta es la guía de **usuario** (para quien analiza los datos): qué
+> significan las salidas y cómo interpretarlas. Es **autocontenida** — con ella basta para
+> entender, filtrar y analizar los CSV; no necesitas leer nada más.
+>
+> Si **después** quieres el detalle interno (algoritmos, máquina de estados, decisiones de
+> ingeniería, entradas/salidas), continúa con la [**documentación técnica**](documentacion_tecnica.md),
+> que es la *segunda lectura* y **da por leída** esta guía. No hace falta leer las dos a la vez.
+>
+> Los **datos concretos** por participante viven en el informe HTML y los CSV, que se
+> regeneran con cada procesamiento.
 
 ## 1. ¿Qué problema resuelve?
 
-En el experimento, una persona lleva unas **gafas de seguimiento ocular** (Pupil Labs) y tiene que **buscar un objeto** (definido por un **color** y una **forma**, p. ej. "hexágono rojo") en un **tablero físico** de fichas de colores. Antes de cada búsqueda se le enseña un panel con el objeto que debe encontrar. El experimento completo tiene **6 *blocks* de 10 *trials*** cada uno.
+El experimento registra, con **gafas de seguimiento ocular** (Pupil Labs), a una persona que busca un objeto —un **color** y una **forma**, p. ej. "hexágono rojo"— en un **tablero físico** de fichas. Las gafas dejan dos señales que esta guía nombra constantemente: el **vídeo de la escena** (*World*, lo que ve la persona) y la **posición de la mirada** (*gaze*) en cada instante.
 
-Las gafas graban dos cosas:
-
-- Un **vídeo de lo que ve la persona** (la escena, con el tablero): es el vídeo de *World*.
-- La **posición de la mirada** (*gaze*) en cada instante: a dónde está mirando dentro de ese vídeo.
-
-El objetivo del software es, a partir de esos datos, reconstruir **a qué casilla del tablero estaba mirando la persona en cada momento** y resumir, para cada *trial*, **cuánto miró cada ficha y cada hueco**. Eso es lo que luego se analiza.
+A partir de esas dos señales, el software reconstruye **a qué casilla del tablero miraba en cada momento** y, por *trial*, resume **cuánto miró cada ficha y cada hueco** y **en qué fase** de la búsqueda. El resto de la guía explica esas salidas y cómo interpretarlas.
 
 ---
 
@@ -40,6 +40,26 @@ Además, hay ficheros de **configuración** comunes a todos (carpeta `cfg/`):
 | `sample_shape_cfg/` | La descripción de los **paneles de estímulo** que se le muestran a la persona antes de cada *trial*. |
 
 Colores posibles: **rojo, verde, azul, amarillo**. Formas posibles: **círculo, hexágono, triángulo, cuadrado, trapecio**.
+
+### La secuencia experimental (qué se busca en cada *block* y *trial*)
+
+El experimento son **6 *blocks* de 10 *trials***. El objetivo buscado en cada uno es fijo y se
+define en `default_trials_config.yaml` (ahí está la versión **textual**, lista para cruzar por
+`block_index` / `trial_index`). Aquí se muestra con el **dibujo del estímulo** que se enseña al
+participante. Las filas son los *blocks* (0–5) y las columnas los *trials* (0–9), igual que en
+los CSV. Algunos participantes tienen su propia variante en `cfg/trials_config_exceptions/`; en
+ese caso manda la suya.
+
+| Block \ Trial | 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 |
+|---|---|---|---|---|---|---|---|---|---|---|
+| **0** | ![yellow_circle](media/print_material/Estímulos_Imprimir/7.png) | ![red_hexagon](media/print_material/Estímulos_Imprimir/3.png) | ![green_triangle](media/print_material/Estímulos_Imprimir/10.png) | ![blue_circle](media/print_material/Estímulos_Imprimir/1.png) | ![red_triangle](media/print_material/Estímulos_Imprimir/5.png) | ![yellow_hexagon](media/print_material/Estímulos_Imprimir/8.png) | ![blue_triangle](media/print_material/Estímulos_Imprimir/2.png) | ![green_hexagon](media/print_material/Estímulos_Imprimir/9.png) | ![yellow_triangle](media/print_material/Estímulos_Imprimir/6.png) | ![red_circle](media/print_material/Estímulos_Imprimir/4.png) |
+| **1** | ![red_hexagon](media/print_material/Estímulos_Imprimir/3.png) | ![yellow_triangle](media/print_material/Estímulos_Imprimir/6.png) | ![blue_circle](media/print_material/Estímulos_Imprimir/1.png) | ![green_triangle](media/print_material/Estímulos_Imprimir/10.png) | ![yellow_circle](media/print_material/Estímulos_Imprimir/7.png) | ![blue_triangle](media/print_material/Estímulos_Imprimir/2.png) | ![red_circle](media/print_material/Estímulos_Imprimir/4.png) | ![yellow_hexagon](media/print_material/Estímulos_Imprimir/8.png) | ![red_triangle](media/print_material/Estímulos_Imprimir/5.png) | ![green_hexagon](media/print_material/Estímulos_Imprimir/9.png) |
+| **2** | ![red_circle](media/print_material/Estímulos_Imprimir/4.png) | ![yellow_triangle](media/print_material/Estímulos_Imprimir/6.png) | ![green_hexagon](media/print_material/Estímulos_Imprimir/9.png) | ![blue_triangle](media/print_material/Estímulos_Imprimir/2.png) | ![yellow_hexagon](media/print_material/Estímulos_Imprimir/8.png) | ![red_triangle](media/print_material/Estímulos_Imprimir/5.png) | ![blue_circle](media/print_material/Estímulos_Imprimir/1.png) | ![green_triangle](media/print_material/Estímulos_Imprimir/10.png) | ![red_hexagon](media/print_material/Estímulos_Imprimir/3.png) | ![yellow_circle](media/print_material/Estímulos_Imprimir/7.png) |
+| **3** | ![yellow_hexagon](media/print_material/Estímulos_Imprimir/8.png) | ![red_triangle](media/print_material/Estímulos_Imprimir/5.png) | ![yellow_circle](media/print_material/Estímulos_Imprimir/7.png) | ![blue_triangle](media/print_material/Estímulos_Imprimir/2.png) | ![red_hexagon](media/print_material/Estímulos_Imprimir/3.png) | ![green_triangle](media/print_material/Estímulos_Imprimir/10.png) | ![blue_circle](media/print_material/Estímulos_Imprimir/1.png) | ![green_hexagon](media/print_material/Estímulos_Imprimir/9.png) | ![yellow_triangle](media/print_material/Estímulos_Imprimir/6.png) | ![red_circle](media/print_material/Estímulos_Imprimir/4.png) |
+| **4** | ![red_circle](media/print_material/Estímulos_Imprimir/4.png) | ![blue_triangle](media/print_material/Estímulos_Imprimir/2.png) | ![yellow_circle](media/print_material/Estímulos_Imprimir/7.png) | ![green_triangle](media/print_material/Estímulos_Imprimir/10.png) | ![red_hexagon](media/print_material/Estímulos_Imprimir/3.png) | ![yellow_triangle](media/print_material/Estímulos_Imprimir/6.png) | ![blue_circle](media/print_material/Estímulos_Imprimir/1.png) | ![green_hexagon](media/print_material/Estímulos_Imprimir/9.png) | ![red_triangle](media/print_material/Estímulos_Imprimir/5.png) | ![yellow_hexagon](media/print_material/Estímulos_Imprimir/8.png) |
+| **5** | ![green_hexagon](media/print_material/Estímulos_Imprimir/9.png) | ![red_triangle](media/print_material/Estímulos_Imprimir/5.png) | ![yellow_hexagon](media/print_material/Estímulos_Imprimir/8.png) | ![red_circle](media/print_material/Estímulos_Imprimir/4.png) | ![blue_triangle](media/print_material/Estímulos_Imprimir/2.png) | ![yellow_circle](media/print_material/Estímulos_Imprimir/7.png) | ![green_triangle](media/print_material/Estímulos_Imprimir/10.png) | ![blue_circle](media/print_material/Estímulos_Imprimir/1.png) | ![yellow_triangle](media/print_material/Estímulos_Imprimir/6.png) | ![red_hexagon](media/print_material/Estímulos_Imprimir/3.png) |
+
+> ⚠️ **El *block* 3 se presenta con el tablero girado 180°**, por diseño. El procesamiento lo **detecta y compensa** automáticamente: las **casillas, el toque y las marcas son correctos**. Lo único que queda expresado en el marco **rotado** es el **índice absoluto de casilla** (`target_cord` / `board_coord`) del *block* 3 — relevante solo para análisis por **posición absoluta** en el tablero, no para "¿encontró / tocó el objetivo?". Por eso las figuras que dibujan la mirada sobre la imagen canónica del tablero **no usan *trials* del *block* 3** (saldrían volteados).
 
 ---
 
@@ -158,11 +178,13 @@ flowchart TD
 
 ### Cómo se detecta el inicio y el fin de cada *trial*
 
-El proceso es completamente **automático**: no hay anotación manual de ningún *trial*. El inicio y el fin se infieren del vídeo usando las únicas referencias que se pueden extraer de forma sistemática mediante análisis de imagen:
+El proceso es completamente **automático**: no hay anotación manual de ningún *trial*. El inicio y el fin se infieren del vídeo a partir de las referencias que se pueden extraer de forma sistemática mediante análisis de imagen:
 
-- **Inicio del *trial*:** el sistema detecta que el tablero es visible en su totalidad (todos los marcadores ArUco del tablero son reconocibles y su contorno puede reconstruirse). En la práctica, esto ocurre cuando el participante ha quitado el panel de estímulo y tiene el tablero delante sin obstáculos. La detección debe mantenerse varios *frames* consecutivos para confirmar el inicio (una detección aislada podía producir *trials* degenerados casi vacíos), y el `init_capture` se retrotrae al primer *frame* de esa racha confirmada.
-- **Mirada anticipada (fase `pre_start`):** mientras el panel se está retirando hay un intervalo en el que parte del tablero ya es visible (la pose se conoce por los ArUcos y la posición de la rejilla por una referencia de sesión) pero el borde completo aún no. Las muestras de *gaze* de ese intervalo que caen sobre casillas del tablero **se registran en la secuencia marcadas con fase `pre_start`**, descartando las que caen sobre el panel (por su polígono proyectado cuando sus ArUcos son visibles, o porque la zona mirada se ve como blanco plano, señal de que el panel aún la tapa). Estas muestras **no** se suman a los contadores por color+forma del CSV resumen; el tiempo de ese intervalo se publica en `early_start_duration_s`.
-- **Fin del *trial* (criterio robusto, por defecto):** el tablero deja de ser detectable porque la mano lo oclúye **al cruzar el borde** para alcanzar la pieza. Tras varios *frames* consecutivos sin contorno el *trial* se cierra y el `end_capture` se **retrotrae al último *frame* con el tablero visible** (no se incluye el tiempo de confirmación de la oclusión). Estado resultante: `test_finish_execution`. Ese mismo instante de entrada de la mano se publica además como `frame_motor_onset`. Es el **mismo criterio que en 1.0.0**, por lo que la `trial_duration_s` es directamente comparable entre ambas versiones; marca el cruce del borde, un instante ligeramente anterior al contacto con la pieza.
+- **Inicio del *trial* (RE-BASADO en v1.2):** el *trial* empieza al **inicio de la búsqueda** —la primera mirada sobre el tablero **mientras el panel se está retirando**—, no a "tablero completamente visible". La pose del tablero se conoce por los marcadores ArUco (homografía) antes de que el contorno se reconstruya, así que la búsqueda anticipada cuenta como parte del *trial*. El `frame_init` (tablero confirmado, racha de detección estable retrotraída a su primer *frame*) se sigue publicando como referencia interna, pero **el inicio del *trial* es `frame_search_start`** (= `frame_early_init` cuando hubo mirada anticipada, o `frame_init` si no la hubo). **Consecuencia:** `trial_duration_s` **aumenta** respecto a v1.0/v1.1 y **deja de ser comparable** con ellas — es un re-basado deliberado para incluir la búsqueda real (y cuenta más fijaciones).
+- **Mirada anticipada (ventana previa):** mientras el panel se está retirando hay un intervalo en el que parte del tablero ya es visible (la pose se conoce por los ArUcos y la posición de la rejilla por una referencia de sesión) pero el borde completo aún no. En v1.2 **todas** las muestras de *gaze* de ese intervalo se registran en la secuencia, etiquetadas según dónde caen: `pre_start` (casilla del tablero), `on_panel` (sobre el panel de muestra, por su polígono proyectado cuando sus ArUcos son visibles), `blank` (casilla aún tapada: se ve blanco plano) o `not_board` (fuera del tablero). Antes se descartaban las tres últimas; ahora se conservan para tener la vista completa (que cada análisis filtre lo que quiera). Ninguna de ellas **suma** a los contadores por color+forma del CSV resumen; solo cuenta la mirada anticipada `pre_start` cuando el inicio se retrotrae sobre ella. El tiempo del intervalo se publica en `early_start_duration_s`.
+- **Fin del *trial* (criterio robusto, por defecto):** el tablero deja de ser detectable porque la mano lo oclúye **al cruzar el borde** para alcanzar la pieza. Tras varios *frames* consecutivos sin contorno el *trial* se cierra y el `end_capture` se **retrotrae al último *frame* con el tablero visible**. Estado resultante: `test_finish_execution`. Ese instante de entrada de la mano se publica como `frame_motor_onset` (detección por contorno, robusta). El fin (`frame_end`) se mantiene en este criterio robusto; la **salida de la mano** (`frame_hand_exit`) y el **toque** se publican como marcas aparte dentro de la fase motora. *Nota v1.2:* el inicio se re-basó (ver punto anterior), así que aunque el criterio de **fin** no cambió, `trial_duration_s` **no es comparable** con v1.0/v1.1.
+- **Salida de la mano (`frame_hand_exit`, v1.2):** en la fase motora se vigila la **oclusión** del tablero y de la casilla objetivo respecto a su referencia limpia; cuando esa oclusión, tras haber subido (la mano entró), vuelve de forma sostenida a su valor de reposo, se anota la **salida de la mano** del tablero. Si la pose del tablero no está disponible, se recurre a la reaparición del contorno.
+- **Panel como máscara (v1.2):** mientras el panel se retira, se localiza (por sus ArUcos o por su dorso blanco) y se **excluye** tanto de la mirada como de la detección de borde y de la oclusión de mano — así el panel no rompe el contorno ni finge entrada de mano, pero la mano entrando por la zona libre sí se detecta.
 - **Toque del objetivo (marca `frame_target_touch`, *mejor esfuerzo*, NO cierra el *trial*):** de forma complementaria se intenta detectar el instante en que la **mano alcanza la pieza objetivo** (la pieza se toca, no se extrae). Se vigila la apariencia del entorno de la casilla objetivo en la vista cenital y se compara con su apariencia de referencia (detección de **cambio**, no de color: funciona con manga negra, blanca o de cualquier color). El entorno del objetivo se divide en sus píxeles blancos (bordes/separaciones) y de color, y la oclusión sólo se confirma cuando **ambos** cambian (doble margen), lo que reduce falsos positivos por sombras parciales. Para descartar cambios globales (desplazamientos de la proyección, movimiento, iluminación), el cambio del objetivo debe destacar sobre la **mediana de varias celdas de control** alejadas, y debe **sostenerse** ~0,2 s (un dedo que sólo pasa por encima al buscar no cuenta). La vigilancia **no empieza hasta** que la cartulina del panel ha dejado de tapar el objetivo (mientras se retira barrería sobre el tablero y lo ocluiría de forma espuria). Esta marca es de **mejor esfuerzo** y puede faltar o adelantarse en algunos *trials* (ver apartado 8): se publica como una columna más para quien quiera usarla como fin alternativo, pero **no decide el cierre del *trial***, de modo que su imprecisión no afecta a la segmentación ni descuadra la secuencia.
 - **Casos especiales:** si el panel del siguiente *trial* se detecta con un *trial* aún en ejecución, el *trial* se cierra en el último *frame* con tablero visible con estado `test_finish_by_next_panel` (la duración es una **cota superior**: incluye desde la cogida hasta el giro hacia la mesa). Si la grabación termina con un *trial* en curso, se cierra igual con estado `test_finish_by_end_of_video`.
 
@@ -172,26 +194,32 @@ Más allá del inicio y el fin, el software registra varias **marcas temporales*
 
 | Marca (columna `frame_*` del CSV) | Qué señala |
 |---|---|
-| `frame_early_init` | Primera *gaze* sobre el tablero mientras el panel se retira (inicio de la búsqueda visual, fase `pre_start`). |
-| `frame_init` | Tablero visible en su totalidad (inicio "formal" del *trial*). |
+| `frame_search_start` | **Inicio del *trial* (v1.2):** primera *gaze* sobre el tablero mientras el panel se retira (= `frame_early_init`), o `frame_init` si no hubo mirada anticipada. |
+| `frame_init` | Tablero confirmado en su totalidad (referencia interna; ya **no** es el inicio del *trial*). |
 | `frame_target_found` | Primera *gaze* que cae sobre la casilla objetivo (cuándo se **ve** el objetivo). |
-| `frame_motor_onset` | La mano entra en el tablero (inicio de la acción motora; detectada por la pérdida del contorno). |
+| `frame_motor_onset` | La mano entra en el tablero (cruce del borde; pérdida del contorno). Robusta. |
 | `frame_target_touch` | La mano **alcanza la pieza objetivo** (toque). Marca de *mejor esfuerzo* (ver apartado 8): puede faltar o adelantarse; **no** cierra el *trial*. |
-| `frame_hand_exit` | La mano sale del tablero tras responder (el contorno vuelve a verse de forma sostenida); confirma un cierre limpio. |
-| `frame_end` | Fin del *trial*: cruce del borde del tablero por la mano (criterio robusto, igual que en 1.0.0). |
+| `frame_hand_exit` | La mano sale del tablero tras responder (la oclusión local del objetivo o del tablero vuelve a su valor de reposo). |
+| `frame_end` | Fin del *trial*: cruce del borde del tablero por la mano (criterio robusto). |
 
-A partir de ellas se derivan las **fases** que aparecen en la columna `Phase` del CSV de secuencia (una por muestra de *gaze*) y como duraciones en el CSV resumen:
+A partir de ellas se derivan las **fases** que aparecen en la columna `Phase` del CSV de secuencia (una por muestra de *gaze*) y como duraciones en el CSV resumen. **v1.2 registra TODAS las muestras** (que cada análisis filtre la fase que quiera); las fases son **temporales** (el momento del *trial*) o **de localización** (dónde cayó la mirada en la ventana previa):
 
-- **`pre_start`**: *gaze* sobre el tablero durante la retirada del panel (`early_start_duration_s`).
-- **`search`** (búsqueda visual): desde que mira el tablero hasta `frame_target_found`.
-- **`verification`**: desde `frame_target_found` hasta `frame_motor_onset` (mira el objetivo antes de actuar).
-- **`motor`** (alcance): desde `frame_motor_onset` hasta el fin del *trial* (cruce del borde).
+- **`pre_start`**: *gaze* sobre una **casilla del tablero** durante la retirada del panel — ahora **parte del *trial*** (inicio re-basado); su tiempo es `anticipation_lead_s`.
+- **`on_panel`** *(v1.2)*: *gaze* sobre el **panel de muestra** (el estímulo) mientras se retira. Antes se descartaba; ahora se registra.
+- **`blank`** *(v1.2)*: *gaze* sobre una casilla del tablero aún **tapada por el panel** (se ve blanco plano). Se conserva la casilla mirada.
+- **`not_board`** *(v1.2)*: *gaze* **fuera del tablero** en esa ventana previa.
+- **`search`** (búsqueda visual): desde el inicio hasta `frame_target_found`.
+- **`verification`**: desde `frame_target_found` hasta la entrada de la mano (mira el objetivo antes de actuar).
+- **`motor`** (alcance): desde la entrada de la mano hasta el **toque** (`frame_target_touch`).
+- **`withdraw`** *(v1.2)*: desde el **toque** hasta que la mano **sale** (`frame_hand_exit`).
+
+> **Qué cuenta en el resumen (`trials_data_<id>.csv`):** solo las fases del *trial* formal **hasta el toque** — `search`, `verification` y `motor` (esta última hasta `frame_target_touch`). Las fases `pre_start`, `on_panel`, `blank`, `not_board` (ventana previa) y `withdraw` (tras el toque) **se registran en la secuencia pero NO suman** a los contadores por color+forma.
+
+> En objetivos de **borde** (fila inferior/superior) las fases pueden **solaparse** (la mano entra y toca casi a la vez, o el objetivo se ve y se alcanza sin pausa): las duraciones de esas fases tienden a ~0. Ese 0 es un solapamiento real de los eventos en el tiempo, no una marca que falte (una marca ausente aparece como celda **vacía**, no como 0).
 
 Algunas marcas pueden faltar en un *trial* concreto (p. ej. no hay `frame_target_touch` si el toque fue demasiado sutil para confirmarse, o no hay `frame_target_found` si nunca se registró *gaze* válido sobre el objetivo); en el CSV aparecen entonces como celda vacía. Las marcas son **independientes**: que falte una no afecta a las demás ni a la segmentación del *trial*.
 
-Estas son las **únicas marcas temporales fiables disponibles** en el diseño experimental a partir de la información de imagen; no existen otras referencias que se puedan extraer de forma sistemática para todos los participantes.
-
-**Limitación importante para la interpretación:** el período registrado como *trial* no coincide exactamente con el proceso cognitivo de búsqueda visual. Por un lado, puede haber un pequeño retardo al inicio (el tablero se ve pero el participante aún no ha empezado a buscar activamente). Por otro, el *trial* termina en el **momento de la respuesta motora** (la mano alcanza la pieza), no en el momento en que se toma la decisión. Esta imprecisión es inherente al diseño; **su ventaja es que es consistente y repetible entre todos los participantes**, lo que permite comparaciones válidas.
+**Qué representa la ventana del *trial* (para juzgar si encaja con tu análisis).** El inicio y el fin se infieren de la imagen —visibilidad del tablero, mirada y oclusión—, no de un marcador cognitivo directo (no hay otra referencia temporal que se pueda extraer de forma sistemática del vídeo para todos los participantes). En consecuencia, la ventana puede incluir un breve margen inicial antes de que arranque la búsqueda activa, y termina en la **respuesta motora** (la mano alcanza la pieza), no en el instante de la decisión. La segmentación se aplica igual a todos los participantes, así que cada análisis puede comprobar si esa ventana es la que necesita y, si no, **recomponer su propio intervalo** con las marcas `frame_*`.
 
 6. **Proyectar la mirada sobre el tablero**. Para cada punto de *gaze* se calcula su posición en la vista cenital del tablero y, con eso, **en qué casilla cae**: de qué color y forma es esa casilla, y si es una **ficha** o un **hueco vacío**.
 
@@ -199,7 +227,7 @@ Estas son las **únicas marcas temporales fiables disponibles** en el diseño ex
 
 ## 4. Un detalle clave: el vídeo y la mirada van a velocidades distintas
 
-El **vídeo de *World*** se graba a **30 imágenes por segundo** (1080p/30 Hz, confirmado en todos los participantes), mientras que la **mirada (*gaze*) se registra a una frecuencia bastante mayor**. Esto **se tiene en cuenta** al proyectar (`EyeDataHandler.py`):
+El **vídeo de *World*** se graba a **30 imágenes por segundo** y resolución **1280×720** (720p, confirmado en todos los participantes), mientras que la **mirada (*gaze*) se registra a una frecuencia bastante mayor**. Esto **se tiene en cuenta** al proyectar (`EyeDataHandler.py`):
 
 - Cada medida de *gaze* se asigna **al *frame* del vídeo de *World* que le corresponde**. Esa correspondencia se decide **comparando los instantes de tiempo** (*timestamps*): se mira en qué *frame* de *World* "cae" el instante de cada mirada. (El dato de *gaze* no trae un número de *frame* ya puesto; se calcula a partir de los tiempos.)
 - En el caso de las *fixations* (miradas con duración), esa mirada se reparte por **todos los *frames* que dura**.
@@ -234,10 +262,19 @@ Todo se guarda en `<output_root>/<topic>/<id>/` (por ejemplo `OutputData_v<versi
 |---|---|
 | **`trials_data_<id>.csv`** | **Resumen por *trial*.** *(base de los análisis)* |
 | **`trials_data_<id>_sequence.csv`** | **Recorrido temporal de la mirada.** *(base de los análisis)* |
+| **`trials_data_<id>_transitions.csv`** *(v1.2)* | **Línea de tiempo del *trial*:** cambios de estado de la máquina **y** marcas conductuales (toque, salida de mano, etc.) intercalados por *frame*. *(ver 6.3)* |
 | `data_<id>.yaml` | Todos los datos en formato legible por humanos. |
 | `data_<id>.pkl` | Los mismos datos, en formato para volver a cargarlos rápido desde Python. |
 | `result_log_<id>.txt` | Un informe de texto con tablas-resumen (reparto de tiempo y de miradas, y una tabla por *trial*). |
 | `debug_<id>.mp4` | (Solo si se activa la visualización) Vídeo de comprobación con todo dibujado encima. |
+
+Y, **una sola vez** por lote (en la carpeta de salida, no por participante), generados por `src/tools/process_outputs.py`:
+
+| Fichero de lote | Para qué sirve |
+|---|---|
+| `combined_trials_<topic>.csv`, `combined_sequence_<topic>.csv`, `combined_transitions_<topic>.csv` *(v1.2)* | Los tres CSV anteriores **apilados de todos los participantes** (con una primera columna `participant`). |
+| `target_geometry.csv` *(v1.2)* | **Tabla de referencia del tablero** (una fila por casilla): posición en la rejilla y en el plano métrico (mm) y la **distancia de alcance** (mm). Es una propiedad del tablero, **igual para todos los participantes**; por eso se publica aquí una vez en lugar de repetirla en cada *trial* (ver 6.4). |
+| `informe_comparativa.html`, `informe_comparativa_frequencies.csv` | Informe HTML comparativo entre versiones y CSV de frecuencias por participante. |
 
 ### ¿Qué hay en el YAML/PKL que no esté en los CSV?
 
@@ -247,6 +284,7 @@ Los CSV bastan para casi todo, pero el `data_<id>.yaml` (y su equivalente `.pkl`
 - **`init_capture` y `end_capture`**: los **números de *frame*** exactos de inicio y fin de cada *trial* (los CSV solo dan la duración en segundos).
 - **`video_fps`**: la frecuencia del vídeo de *World* usada para los cálculos.
 - **`frames_info` y `fixations_info`**: el reparto de *frames* y de muestras de *gaze* por fase (también resumido en `result_log_<id>.txt`).
+- **`state_transitions`** *(v1.2)*: la lista cruda de cambios de estado de la máquina (los mismos que el CSV `..._transitions.csv`, antes de intercalar las marcas).
 
 ---
 
@@ -270,13 +308,16 @@ Cada fila resume **cuánto miró la persona a un color+forma concreto durante un
 | `Shape` | Forma de la casilla mirada (`circle`, `hexagon`, `triangle`, `square`, `trapezoid`) o `not_board`. |
 | `Piece Fixations` | Nº de muestras de *gaze* que cayeron sobre la **ficha** de ese color+forma. |
 | `Slot only Fixations` | Nº de muestras de *gaze* que cayeron sobre el **hueco vacío** de ese color+forma. |
-| `trial_duration_s` | **Duración del *trial* en segundos** (tiempo real). Se repite en todas las filas del *trial*. |
-| `early_start_duration_s` | Tiempo (s) con mirada ya registrada sobre el tablero **antes** del inicio formal del *trial*, durante la retirada del panel (fase `pre_start`, ver apartado 3). 0 si no hubo. Ese tiempo NO está incluido en `trial_duration_s` ni sus muestras en los contadores. |
-| `time_to_target_s` | Tiempo (s) desde el inicio de la búsqueda hasta la **primera mirada al objetivo** (`frame_target_found`). Vacío si nunca se registró *gaze* sobre el objetivo. |
-| `search_duration_s` | Tiempo (s) de **búsqueda**: desde el inicio hasta que la mano entra en el tablero (`frame_motor_onset`). Vacío si no se detectó la entrada de la mano. |
-| `motor_duration_s` | Tiempo (s) de **alcance motor**: desde que la mano entra (`frame_motor_onset`) hasta el fin (`frame_end`). Vacío si no se detectó la entrada de la mano. |
-| `frame_early_init`, `frame_init`, `frame_target_found`, `frame_motor_onset`, `frame_target_touch`, `frame_hand_exit`, `frame_end` | **Marcas temporales crudas** en nº de *frame* del vídeo de *World* (ver apartado 3). Permiten a cada análisis recomponer sus propios intervalos o elegir su propio punto de inicio/fin. Vacías cuando el evento no se observó. |
-| `Finish Status` | Cómo terminó el *trial*: `test_finish_execution` = criterio por defecto, el tablero dejó de detectarse al cruzar la mano el borde (igual que en 1.0.0; instante ligeramente anterior al toque); `test_finish_by_next_panel` = cerrado al aparecer el panel siguiente — duración **cota superior** (ver apartado 3); `test_finish_by_end_of_video` = cerrado por fin de grabación. Otro valor indica final anómalo o problemas de procesamiento. El toque de la pieza **no** es un estado de fin: se publica como marca aparte (`frame_target_touch`). |
+| `trial_duration_s` | **Duración del *trial* en segundos** (tiempo real). **v1.2: re-basada** desde `frame_search_start` (inicio de la búsqueda) hasta `frame_end`; mayor que en v1.0/v1.1 y **no comparable** con ellas. Se repite en todas las filas del *trial*. |
+| `early_start_duration_s` / `anticipation_lead_s` | Tiempo (s) de **mirada anticipada**: cuánto antes de que el tablero quede confirmado el participante ya miraba al tablero durante la retirada del panel. 0 si no anticipó. (En v1.2 ese tiempo **sí** forma parte del *trial*.) |
+| `anticipatory_gaze` | **Covariable de anticipación**: nº de fijaciones sobre el tablero durante la retirada del panel. 0 = esperó a que se retirara; alto = anticipó. Permite controlar estadísticamente "anticipa vs espera". |
+| `time_to_target_s` | Tiempo (s) desde el inicio hasta la **primera mirada al objetivo** (`frame_target_found`). Vacío si nunca se registró *gaze* sobre el objetivo. |
+| `search_duration_s` | Tiempo (s) de **búsqueda**: desde el inicio hasta que la mano entra en el tablero. Vacío si no se detectó la entrada. |
+| `reach_duration_s` | Tiempo (s) de **alcance**: desde que la mano entra hasta el **toque**. Vacío si falta alguna de las dos marcas. |
+| `withdraw_duration_s` | Tiempo (s) de **retirada**: desde el **toque** hasta que la mano **sale** (`frame_hand_exit`). Vacío si falta alguna marca. |
+| `target_row`, `target_col` | **Posición del objetivo** en la rejilla (fila 0 = lejos/arriba; columna 0..7). Covariable de distancia (grueso). La **distancia de alcance en mm** (covariable tipo Fitts) **no** se repite aquí: es una propiedad fija de la casilla y vive en la tabla de referencia `target_geometry.csv` (ver 6.4); se une por `trial_name` o por `target_row`/`target_col`. |
+| `frame_search_start`, `frame_init`, `frame_target_found`, `frame_motor_onset`, `frame_target_touch`, `frame_hand_exit`, `frame_end` | **Marcas temporales crudas** en nº de *frame* del vídeo de *World* (ver apartado 3). Permiten recomponer cualquier intervalo. Vacías cuando el evento no se observó. |
+| `Finish Status` | Cómo terminó el *trial*: `test_finish_execution` = criterio por defecto, el tablero dejó de detectarse al cruzar la mano el borde; `test_finish_by_next_panel` = cerrado al aparecer el panel siguiente — duración **cota superior** (ver apartado 3); `test_finish_by_end_of_video` = cerrado por fin de grabación. Otro valor indica final anómalo. El toque de la pieza **no** es un estado de fin: se publica como marca aparte (`frame_target_touch`). |
 
 Las columnas de duración por fase y los `frame_*` se **repiten en todas las filas del mismo *trial*** (igual que `trial_duration_s`), porque describen el *trial*, no la casilla mirada.
 
@@ -304,7 +345,7 @@ Cada fila es **una muestra de *gaze* individual**, en orden cronológico. Sirve 
 | `Color` | Color de la casilla donde cayó esta mirada (o `not_board`). |
 | `Shape` | Forma de esa casilla (o `not_board`). |
 | `Piece=1/Slot=0` | Si esa casilla es **ficha** o **hueco vacío**. En el CSV aparece como `True`/`False` (pese a que la cabecera diga `1/0`). |
-| `Phase` | Fase del proceso en la que cae esta muestra (ver apartado 3): `pre_start` (mirada sobre el tablero durante la retirada del panel, no cuenta en el CSV resumen), `search` (búsqueda visual, hasta la primera mirada al objetivo), `verification` (desde que ve el objetivo hasta que la mano entra) y `motor` (desde que la mano entra hasta el fin del *trial*). Las fases `search`/`verification`/`motor` corresponden todas al *trial* formal y sí cuentan en el CSV resumen. |
+| `Phase` | Fase en la que cae esta muestra (ver apartado 3). Temporales del *trial*: `search` (hasta la primera mirada al objetivo), `verification` (objetivo visto, mano aún fuera), `motor` (mano alcanzando, hasta el toque) y `withdraw` (tras el toque, la mano se retira). Ventana previa (retirada del panel): `pre_start` (casilla del tablero), `on_panel` (sobre el panel de muestra), `blank` (casilla aún tapada), `not_board` (fuera del tablero). **v1.2 registra TODAS**; en el resumen solo cuentan `search`/`verification`/`motor` (hasta el toque). |
 | `Frame_N` | **Número de imagen (*frame*) del vídeo de *World*** en la que se registró esta mirada. |
 | `trial_duration_s` | Duración total del *trial* en segundos (se repite). |
 | `Board Coord` | **Casilla del tablero** en forma `[columna, fila]` (`[-1, -1]` si cayó fuera). |
@@ -321,6 +362,65 @@ block,trial,trial_name,Color,Shape,Pieza?,Frame,dur_s,Casilla,PosNorm,status
 ```
 
 Se lee así: en la imagen **169** del vídeo, la mirada estaba en la casilla **[columna 5, fila 3]**, que es la **ficha del hexágono verde**, situada hacia el centro-derecha del tablero. Que haya **varias filas con el mismo `Frame_N` (169)** es justo lo explicado en el apartado 4: a una misma imagen del vídeo le corresponden varias muestras de *gaze* porque la mirada se registra más rápido que el vídeo.
+
+Con este CSV se puede reconstruir el **recorrido** de la mirada por el tablero a lo largo del *trial*, coloreado por fase, desde la búsqueda hasta el objetivo:
+
+![recorrido de la mirada](media/documentation/trayectoria_mirada.png)
+
+Más ejemplos con distintas **piezas objetivo** (cada uno un *trial* real del mismo participante, coloreado por fase; el objetivo va rodeado en negro):
+
+| | |
+|---|---|
+| ![](media/documentation/trayectoria_green_triangle.png) | ![](media/documentation/trayectoria_red_circle.png) |
+| ![](media/documentation/trayectoria_blue_triangle.png) | ![](media/documentation/trayectoria_yellow_hexagon.png) |
+| ![](media/documentation/trayectoria_red_hexagon.png) | ![](media/documentation/trayectoria_yellow_triangle.png) |
+
+### 6.3. `trials_data_<id>_transitions.csv` — línea de tiempo del *trial* (v1.2)
+
+Una **única tabla cronológica por *trial*** que mezcla dos tipos de fila: los **cambios de estado** de la máquina y las **marcas conductuales** (toque, salida de mano, etc.), todas con su *frame* exacto. Permite reconstruir, de un vistazo, *qué pasó y cuándo* en cada *trial*.
+
+| Columna | Significado |
+|---|---|
+| `block_index`, `trial_index`, `trial_name` | *Block*, *trial* y objeto buscado a los que pertenece el evento. |
+| `frame`, `time_s` | *Frame* del vídeo de *World* y su tiempo en segundos. |
+| `event` | Tipo de fila: `state_change` (cambio de estado) **o** el nombre de una marca: `search_start`, `target_found`, `motor_onset`, `target_touch`, `hand_exit`, `trial_end`. |
+| `from_state`, `to_state` | Estado de origen y destino (solo en filas `state_change`; vacíos en las marcas). |
+
+Cómo se usa: filtra `event == 'state_change'` para ver **solo la máquina de estados**; filtra por los nombres de marca para ver **solo las marcas conductuales**; lee **todas** las filas (ya vienen ordenadas por *frame*) para la **línea de tiempo completa**.
+
+> **El toque NO es un estado, es una marca.** La máquina tiene 6 estados (`init`, `get_test_name`, `test_start_execution`, `test_execution`, `test_motor_recovery`, `test_finish_execution`); el toque, la primera mirada al objetivo, la entrada y la salida de la mano son **marcas** que ocurren *dentro* de esos estados (por eso `target_touch` no cierra el *trial*: ver apartado 8). Esta tabla las une en un solo eje temporal sin mezclar los dos conceptos en el motor.
+
+**Ejemplo real** (participante 049, *block* 0, *trial* 7, buscando el **hexágono verde**):
+
+```
+block,trial,trial_name,frame,time_s,event,from_state,to_state
+0,7,green_hexagon,9236,309.501,state_change,init,get_test_name
+0,7,green_hexagon,9252,310.038,state_change,get_test_name,test_start_execution
+0,7,green_hexagon,9261,310.339,search_start,,
+0,7,green_hexagon,9266,310.507,state_change,test_start_execution,test_execution
+0,7,green_hexagon,9274,310.775,target_found,,
+0,7,green_hexagon,9284,311.110,motor_onset,,
+0,7,green_hexagon,9284,311.110,trial_end,,
+0,7,green_hexagon,9285,311.143,target_touch,,
+0,7,green_hexagon,9291,311.344,state_change,test_execution,test_motor_recovery
+0,7,green_hexagon,9294,311.445,hand_exit,,
+0,7,green_hexagon,9296,311.512,state_change,test_motor_recovery,test_finish_execution
+0,7,green_hexagon,9296,311.512,state_change,test_finish_execution,init
+```
+
+Nótese que `trial_end` (cruce del borde, robusto) cae **antes** que `target_touch` (un par de *frames* después): es real, la mano ya está sobre el tablero cuando toca la pieza (ver apartado 3). El mismo CSV apilado de todos los participantes es `combined_transitions_<topic>.csv`.
+
+### 6.4. `target_geometry.csv` — referencia del tablero (v1.2)
+
+Tabla de **referencia única** (una fila por casilla del tablero), **igual para todos los participantes**, que se publica una sola vez por lote. Evita repetir en cada *trial* propiedades que son fijas de la casilla. Se une al resumen por `trial_name` (= `color_forma`) o por `target_row`/`target_col`.
+
+| Columna | Significado |
+|---|---|
+| `trial_name` | `color_forma` de la pieza (clave de unión con el resumen). |
+| `color`, `shape`, `is_piece` | Color, forma y si es ficha (`True`) o hueco (`False`). |
+| `target_row`, `target_col` | Posición en la rejilla (fila 0 = lejos/arriba; columna 0..7). |
+| `target_x_mm`, `target_y_mm` | Centro de la casilla en el **plano métrico** del tablero (mm). |
+| `reach_distance_mm` | **Distancia de alcance** (covariable tipo Fitts): distancia recta 2D en el plano del tablero (mm) desde el lado de entrada del participante (centro-abajo) hasta el objetivo. No es la trayectoria 3D real. |
 
 ---
 
@@ -353,8 +453,8 @@ Es importante **no esperar que haya dato de mirada para todo el tiempo del *tria
 ## 8. Notas importantes para quien analice los CSV
 
 - **Los conteos son de muestras de *gaze*, no de imágenes de vídeo.** Por la diferencia de velocidad (apartados 4 y 7), un *trial* puede tener más muestras que *frames*; la **duración en segundos** sí es tiempo real.
-- **La `trial_duration_s` incluye el tiempo de respuesta motora.** El *trial* termina cuando la mano entra en el tablero (último *frame* con el tablero visible; el tiempo de confirmación de la oclusión ya no se incluye), no cuando se toma la decisión de búsqueda. Ver la subsección "Cómo se detecta el inicio y el fin de cada *trial*" en el apartado 3.
-- ***Trials* con error.** Algunos *trials* no salen bien (el participante no pasó por la secuencia esperada, o hubo un salto entre paneles). Se reconocen porque el `trial_name` empieza por `missing_trial_error_` o `transition_error_`, y suelen tener duración 0 o estado anómalo. **Conviene filtrarlos antes de analizar.** Hay dos scripts de comprobación: `src/tools/check_correct_output.py` (avisa de carpetas con ficheros faltantes o con muchos errores) y `src/tools/check_correct_trials.py` (compara, participante a participante, los *trials* detectados frente a la secuencia esperada).
+- **`trial_duration_s` está RE-BASADA en v1.2 y NO es comparable con v0.8/v1.0/v1.1.** Empieza en el inicio de la **búsqueda** (mirada anticipada durante la retirada del panel) y termina al cruzar la mano el borde. Incluye, por tanto, la búsqueda anticipada (antes excluida) y la respuesta motora. El cambio es **deliberado** (más fiel) y obliga a **reprocesar toda la cohorte con v1.2** y a comparar solo v1.2 entre sí. Ver la subsección "Cómo se detecta el inicio y el fin" en el apartado 3.
+- ***Trials* con error.** Algunos *trials* no se segmentan bien (el procesado no detectó el panel esperado, o hubo un salto entre paneles — suele ser un fallo de detección, no del participante). Se reconocen porque el `trial_name` empieza por `missing_trial_error_` o `transition_error_`, y suelen tener duración 0 o estado anómalo. **Conviene filtrarlos antes de analizar.** Hay dos scripts de comprobación: `src/tools/check_correct_output.py` (avisa de carpetas con ficheros faltantes o con muchos errores) y `src/tools/check_correct_trials.py` (compara, participante a participante, los *trials* detectados frente a la secuencia esperada).
 - **La marca `frame_target_touch` es de *mejor esfuerzo*.** Detecta el instante del toque de la pieza objetivo a partir del cambio de imagen en la casilla, pero cuando sólo se ve parte de los marcadores ArUco del tablero la vista cenital se desplaza y el toque puede **adelantarse** (~0,5–1 s, al entrar la mano en la zona) o **no registrarse**. **No cierra el *trial*** (eso lo hace `frame_end`, robusto), así que su imprecisión no descuadra nada; pero si se usa como fin alternativo, conviene tratarla con cautela y contrastarla con `frame_motor_onset`/`frame_end`.
 - **De CSV a gráficos.** Hay scripts que dibujan el recorrido de la mirada sobre la imagen del tablero (`src/tools/project_paths.py`, `src/tools/data_analysis.py`) y un vídeo con la mirada superpuesta sobre la grabación original (`src/tools/project_data.py`).
 
@@ -369,31 +469,28 @@ Es importante **no esperar que haya dato de mirada para todo el tiempo del *tria
 
 ### Del equipo de medida (Pupil Labs Core)
 
-El dispositivo empleado es el **Pupil Labs Core** (Kassner, Patera & Bulling, 2014), un eye-tracker binocular portátil de código abierto. Sus especificaciones técnicas relevantes son: cámaras oculares a **200 Hz** (192×192 px), cámara de escena (*World*) a **1080p/30 Hz**, exactitud de **0,60°** y precisión de **0,02°** (ambas con calibración y en condiciones de laboratorio).
+El dispositivo empleado es el **Pupil Labs Core** (Kassner, Patera & Bulling, 2014), un eye-tracker binocular portátil de código abierto. Sus especificaciones técnicas relevantes son: cámaras oculares a **200 Hz** (192×192 px), cámara de escena (*World*) hasta 1080p/30 Hz —**estas grabaciones a 1280×720/30 Hz**—, exactitud de **0,60°** y precisión de **0,02°** (ambas con calibración y en condiciones de laboratorio).
 
 - **Error angular y su traducción espacial.** La exactitud de 0,60° se obtiene en condiciones controladas; en uso naturalista (movimiento de cabeza, variabilidad de iluminación, tarea real) el error puede ser mayor. Este error angular se traduce en una **incertidumbre espacial** al asignar la mirada a una casilla del tablero: cuanto mayor sea la distancia participante–tablero y más pequeñas sean las casillas, más probable es que una muestra de *gaze* quede asignada a la casilla adyacente en lugar de la correcta.
 - **Calidad de la señal y pérdida de datos.** En momentos de parpadeo, movimiento brusco o reflejo corneal desfavorable, el aparato puede no registrar *gaze* o registrarlo con baja confianza. Las muestras con confianza ≤ 0,6 se descartan (ver apartado 4); esos fragmentos no se contabilizan. Aunque la frecuencia nominal del dispositivo es 200 Hz, el número efectivo de muestras válidas varía entre participantes (los valores concretos por participante están en el informe HTML y los CSV; ver apartado 10), lo que refleja diferencias en la calidad de la señal y no diferencias de hardware.
-- **Características oculares individuales como variable no controlada.** El algoritmo de Pupil Labs Core detecta la pupila mediante técnica de pupila oscura sobre la imagen infrarroja del ojo. El color del iris, la forma del párpado, la presencia de pliegue epicántico u otras características anatómicas individuales influyen en la facilidad y precisión de esa detección. Estas diferencias no están controladas en el diseño experimental y pueden explicar parte de la variación en número de muestras válidas y en precisión entre participantes.
+- **Características oculares individuales como variable no controlada.** Las características anatómicas del ojo (color del iris, forma del párpado, etc.) influyen en la facilidad y precisión con que se detecta la pupila. No están controladas en el diseño y pueden explicar parte de la variación entre participantes en número de muestras válidas y en precisión. *(El mecanismo de detección de pupila se detalla en la [documentación técnica](documentacion_tecnica.md).)*
 - **Deriva de la calibración.** La calibración se realiza al inicio de la sesión. Si las gafas se desplazan levemente durante el experimento —algo habitual en tareas naturalistas con movimiento de cabeza—, la correspondencia entre la dirección de mirada estimada y la posición real en la imagen puede degradarse progresivamente. El dispositivo incorpora compensación de deslizamiento (*slippage compensation*) mediante el modelo 3D del ojo, pero no elimina por completo este efecto.
 
 ---
 
 ## 10. Magnitud del procesamiento
 
-El experimento consta de **6 bloques de 10 *trials*** por participante. El volumen
-**concreto** procesado —duración de vídeo, *frames*, muestras de *gaze* válidas
-(confianza > 0,6), *trials* válidos segmentados y frecuencias por participante— **no se
-fija aquí**: se recoge en el **informe HTML** que se regenera con cada procesamiento
-(`informe_comparativa.html`, pestañas *Detección* / *Tipo de fin* / *Frecuencias*) y en
-los **CSV combinados** (`combined_trials_*.csv`, `informe_comparativa_frequencies.csv`).
-De ese modo esta guía permanece **genérica** (cómo se interpreta y cómo se genera la
-salida) y los números concretos viven junto a los datos, siempre actualizados con la
-versión vigente.
+El volumen **concreto** procesado por lote —duración de vídeo, *frames*, muestras de
+*gaze* válidas (confianza > 0,6), *trials* segmentados y frecuencias por participante— se
+recoge en el **informe HTML** (`informe_comparativa.html`, pestañas *Detección* / *Tipo de
+fin* / *Frecuencias*) y en los **CSV combinados**, regenerados con cada procesamiento. Así
+los números acompañan siempre a la versión vigente de los datos y esta guía describe solo
+cómo se interpretan.
 
-> La variación del número de muestras válidas entre participantes refleja diferencias en
-> calidad de señal y características oculares individuales (apartado 9), no diferencias de
-> hardware. El total pre-filtrado no está disponible al no conservarse los ficheros
-> originales de captura.
+> La variación del número de muestras válidas entre participantes refleja diferencias de
+> calidad de señal y características oculares individuales (apartado 9), no del equipo
+> (idéntico para todos). Los totales previos al filtrado por confianza no se conservan
+> (no se guardaron los ficheros originales de captura).
 
 ---
 
