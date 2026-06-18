@@ -1,8 +1,11 @@
 
 ## All 6 blocks of trials
-test_block_list: 
+# Bloque 1, trial 6 (red_circle) NO se presentó en la toma: verificado frame a frame en el vídeo
+# (world.mp4 ~2:00) -> el bloque 1 muestra 9 cartas, salta de blue_triangle (t5) a yellow_hexagon
+# (t7). Marcado [-1] = descarte documentado (no es un error de detección, la carta no se mostró).
+test_block_list:
  - [0, [[-1, "yellow_circle"], [0, "yellow_circle"],  [1, "red_hexagon"],     [2, "green_triangle"], [3, "blue_circle"],    [4, "red_triangle"],   [5, "yellow_hexagon"],  [6, "blue_triangle"],  [7, "green_hexagon"],  [8, "yellow_triangle"], [9, "red_circle"]]]
- - [1, [[0, "red_hexagon"],    [1, "yellow_triangle"], [2, "blue_circle"],    [3, "green_triangle"], [4, "yellow_circle"],  [5, "blue_triangle"],   [6, "red_circle"],     [7, "yellow_hexagon"], [8, "red_triangle"],    [9, "green_hexagon"]]]
+ - [1, [[0, "red_hexagon"],    [1, "yellow_triangle"], [2, "blue_circle"],    [3, "green_triangle"], [4, "yellow_circle"],  [5, "blue_triangle"],   [-1, "red_circle"],    [7, "yellow_hexagon"], [8, "red_triangle"],    [9, "green_hexagon"]]]
  - [2, [[0, "red_circle"],     [1, "yellow_triangle"], [2, "green_hexagon"],  [3, "blue_triangle"],  [4, "yellow_hexagon"], [5, "red_triangle"],    [6, "blue_circle"],    [7, "green_triangle"], [8, "red_hexagon"],     [9, "yellow_circle"]]]
  - [3, [[0, "yellow_hexagon"], [1, "red_triangle"],    [2, "yellow_circle"],  [3, "blue_triangle"],  [4, "red_hexagon"],    [5, "green_triangle"],  [6, "blue_circle"],    [7, "green_hexagon"],  [8, "yellow_triangle"], [9, "red_circle"]]]
  - [4, [[0, "red_circle"],     [1, "blue_triangle"],   [2, "yellow_circle"],  [3, "green_triangle"], [4, "red_hexagon"],    [5, "yellow_triangle"], [6, "blue_circle"],    [7, "green_hexagon"],  [8, "red_triangle"],    [9, "yellow_hexagon"]]]

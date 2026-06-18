@@ -12,7 +12,7 @@ import cv2.aruco
 import yaml
 from yaml.loader import SafeLoader
 
-from src.core.utils import projectCenter, interpolate_points, getMaskHue
+from src.core.utils import projectCenter, interpolate_points
 from src.core.ArucoBoardHandler import ArucoBoardHandler
 
 """

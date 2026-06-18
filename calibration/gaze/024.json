@@ -1,0 +1,112 @@
+{
+  "participant": "024",
+  "apply": false,
+  "calib_segment_times": [
+    -61.743,
+    17.427,
+    48.825
+  ],
+  "panel_offsets": [
+    {
+      "t": 27.695,
+      "off_x": -0.003569,
+      "off_y": 0.013133,
+      "seg": 1,
+      "n_dots": 6
+    },
+    {
+      "t": 104.989,
+      "off_x": -0.000886,
+      "off_y": 0.017263,
+      "seg": 2,
+      "n_dots": 7
+    },
+    {
+      "t": 165.666,
+      "off_x": 0.002116,
+      "off_y": 0.014894,
+      "seg": 2,
+      "n_dots": 5
+    },
+    {
+      "t": 239.939,
+      "off_x": 0.001603,
+      "off_y": 0.010636,
+      "seg": 2,
+      "n_dots": 4
+    },
+    {
+      "t": 314.463,
+      "off_x": 0.003461,
+      "off_y": 0.042937,
+      "seg": 2,
+      "n_dots": 7
+    },
+    {
+      "t": 373.378,
+      "off_x": 0.00866,
+      "off_y": 0.020726,
+      "seg": 2,
+      "n_dots": 8
+    }
+  ],
+  "stats": {
+    "base_px": 29.93,
+    "corr_px": 28.15,
+    "gain": 0.06,
+    "gain_lo": -0.049,
+    "gain_hi": 0.224,
+    "n_points": 37
+  },
+  "uncertainty": {
+    "jitter_cov_px": {
+      "sigma_major": 20.14,
+      "sigma_minor": 16.59,
+      "angle_deg": 87.9
+    },
+    "conf_var_factor": {
+      "conf": [
+        0.675,
+        0.8,
+        0.89,
+        0.955,
+        0.995
+      ],
+      "factor": [
+        0.581,
+        0.581,
+        0.581,
+        0.581,
+        0.581
+      ]
+    },
+    "spatial_var_factor": {
+      "model": "radial_ecc_px",
+      "ecc": [
+        114.0,
+        187.5,
+        290.0
+      ],
+      "factor": [
+        0.896,
+        0.776,
+        1.407
+      ]
+    },
+    "jitter_rms_px": 26.09,
+    "n_samples": 7564,
+    "units": "image px (1280x720); Sigma_meas = jitter_cov * conf_var_factor(conf) * spatial_var_factor(ecc)",
+    "bias_cov_px": [
+      [
+        521.1601309908634,
+        -61.875329116127226
+      ],
+      [
+        -61.875329116127226,
+        720.9729129787399
+      ]
+    ]
+  },
+  "fingerprint": "44095fb34483",
+  "units": "normalized image coords, origin top-left; subtract off from [x, 1-y]"
+}

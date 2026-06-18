@@ -1,0 +1,114 @@
+{
+  "participant": "054",
+  "apply": true,
+  "calib_segment_times": [
+    -3.515,
+    186.416,
+    309.267,
+    343.622,
+    530.74
+  ],
+  "panel_offsets": [
+    {
+      "t": 11.579,
+      "off_x": 0.009611,
+      "off_y": -0.012043,
+      "seg": 0,
+      "n_dots": 9
+    },
+    {
+      "t": 86.086,
+      "off_x": 0.005797,
+      "off_y": -0.053071,
+      "seg": 0,
+      "n_dots": 8
+    },
+    {
+      "t": 179.724,
+      "off_x": -0.000149,
+      "off_y": -0.03886,
+      "seg": 0,
+      "n_dots": 8
+    },
+    {
+      "t": 315.901,
+      "off_x": 0.00319,
+      "off_y": -0.008197,
+      "seg": 2,
+      "n_dots": 9
+    },
+    {
+      "t": 431.941,
+      "off_x": 0.010287,
+      "off_y": -0.054928,
+      "seg": 3,
+      "n_dots": 8
+    },
+    {
+      "t": 517.02,
+      "off_x": 0.006111,
+      "off_y": -0.043518,
+      "seg": 3,
+      "n_dots": 8
+    }
+  ],
+  "stats": {
+    "base_px": 34.9,
+    "corr_px": 21.73,
+    "gain": 0.377,
+    "gain_lo": 0.167,
+    "gain_hi": 0.487,
+    "n_points": 50
+  },
+  "uncertainty": {
+    "jitter_cov_px": {
+      "sigma_major": 20.26,
+      "sigma_minor": 11.22,
+      "angle_deg": 104.9
+    },
+    "conf_var_factor": {
+      "conf": [
+        0.675,
+        0.8,
+        0.89,
+        0.955,
+        0.995
+      ],
+      "factor": [
+        0.898,
+        0.898,
+        0.898,
+        0.835,
+        0.835
+      ]
+    },
+    "spatial_var_factor": {
+      "model": "radial_ecc_px",
+      "ecc": [
+        133.3,
+        272.9,
+        416.6
+      ],
+      "factor": [
+        1.406,
+        0.776,
+        0.795
+      ]
+    },
+    "jitter_rms_px": 23.16,
+    "n_samples": 15319,
+    "units": "image px (1280x720); Sigma_meas = jitter_cov * conf_var_factor(conf) * spatial_var_factor(ecc)",
+    "bias_cov_px": [
+      [
+        305.2996749980336,
+        50.259962795451855
+      ],
+      [
+        50.259962795451855,
+        542.5353720287719
+      ]
+    ]
+  },
+  "fingerprint": "44095fb34483",
+  "units": "normalized image coords, origin top-left; subtract off from [x, 1-y]"
+}

@@ -4,6 +4,117 @@ All notable changes to this project are documented in this file. Versions prior 
 1.0.0 were reconstructed from the git history. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [1.4.0](https://github.com/enheragu/eye_tracking_board/releases/tag/v1.4.0) - 2026-06-18
+
+A per-sample gaze **uncertainty model** that treats each gaze as a distribution rather than a
+point, the `target_found` mark re-based on that uncertainty, and reliability hardening of two
+detections (board frame and sample panel).
+
+### Added
+- **Per-sample gaze uncertainty model.** Each gaze now carries a measured 2×2 covariance
+  (jitter + accuracy/drift, scaled by confidence and eccentricity), calibrated per participant
+  from the in-video panels and propagated by the now inverse-variance smoother. It projects onto
+  the board as a probabilistic cell distribution (`cell_dist` / `onboard_mass`) per sample and a
+  graded `target_found_confidence` per trial; covered gaze (`on_panel` / `blank`) reads 0% board.
+  A cell is ~⅛×⅕ of the board and the device resolves to ~½ a cell, so the gaze is treated as a
+  distribution, not a point. Docs [§7.4–7.5](docs/documentacion_tecnica.md), [guide §6](docs/guia_procesamiento.md).
+
+### Changed
+- **`target_found` by ellipse mass, not a discrete cell vote.** `frame_target_found` (and with it
+  `time_to_target_s` and the search/verification boundary) now fires on the first fixation whose
+  mean uncertainty mass on the target reaches `target_found_mass_threshold` (0.30), instead of
+  requiring a majority of sample centroids in the exact cell. A boundary-hugging fixation — inside
+  the device error the model already accounts for — counts as found instead of being forced to a
+  hard yes/no (cohort: found 1017 → 1068). Falls back to the centroid vote when a fixation has no
+  covariance. Docs [§7.5](docs/documentacion_tecnica.md), [§10](docs/documentacion_tecnica.md).
+- **Robust board-frame detection (`detectContour`).** The frame colour threshold is now median + MAD
+  with a temporal EMA, so a hand entering a margin no longer corrupts it, and the rectangle is found
+  directly on the mask (no Canny, no close). This cuts contour flicker without losing trial starts.
+  Doc §4.
+- **Panel robustness against ArUco false positives.** Panel confirmation now requires 4 consecutive
+  frames (was 2): a misread marker is a one-marker, few-frame blip, while a real card persists for
+  dozens of frames, which removes the phantom-panel cascades that desynced the sequence. Doc §5.
+
+## [1.3.0] - 2026-06-16 <!-- developed but never separately tagged; ships within v1.4.0 -->
+
+Gaze-quality correction, a signal-processing model for the motor marks, and reliability
+hardening of the pipeline. The gaze is cleaned before mapping (per-participant **drift
+correction** from the in-video calibration panels — CV-gated so it never worsens — plus
+**blink exclusion** and velocity-gated smoothing, all preserving the sampling rate). The motor
+marks (`motor_onset` / `target_touch` / `hand_exit`) are re-derived post-hoc from the per-frame
+occlusion profile (the **bump model**: rise → peak → valley on the target `fT` and whole-board
+`board_occ` occlusion curves), which is persisted as `signal_trace`, so a change to the post-hoc
+stage reprocesses in **seconds without re-decoding video**. A reliable **`off_target`** anomaly
+(a completed reach — hand in *and* out of the board — with neither a target touch nor the gaze
+committed to the target) plus the **gaze-validated piece** capture "went elsewhere" errors. The
+key lesson of this release: **result quality must not depend on remembering a flag** — slow/
+precise is now the default, every output records its `run_config`, and incomplete/partial runs
+warn loudly. Validated on the **22 participants**: on the common trials, hand-exit coverage
+**77 → 86%** (the bump model), target-touch unchanged; the absolute drops seen in a first run
+were traced to fast-mode subsampling and a mis-tuned exception config, both fixed below.
+
+### Added
+- **Gaze drift correction** ([`GazeCorrectionHandler`](src/core/GazeCorrectionHandler.py),
+  offline [`gaze_calibration.py`](src/tools/gaze_calibration.py)): per-participant, segment-aware
+  offset from the recoverable in-video 9-dot panels, adopted only when a leave-one-panel-out +
+  bootstrap gate proves it does not worsen (8/22 apply). Plus **blink exclusion**
+  (`blinks.pldata`) and a confidence²-weighted, saccade-segmented **gaze smoother** in
+  [`EyeDataHandler`](src/core/EyeDataHandler.py).
+- **Bump model for the motor marks** (post-hoc, from `signal_trace`): `target_touch` = target
+  occlusion peak, `hand_exit` = whole-board occlusion valley (adaptive to the local target for
+  finger-only touches), `motor_onset` = the contour entry **validated by the occlusion** (a
+  contour lost without any occlusion rise is an artifact — homography flicker or an edge hand —
+  and is moved to the real rise; cause recorded in `motor_onset_source`). Relaxed temporal
+  **congruence** + `reach_style`. Re-applied without video by
+  [`reprocess_landmarks.py`](src/tools/reprocess_landmarks.py).
+- **`target_found`** as an I-DT **dwell** (windowed dispersion on the corrected gaze), and a
+  new **`validation`** phase/mark (last board fixation before the touch).
+- **Off-target anomaly detection**: `error_type` = `correct` / `off_target` / `no_touch` from
+  reliable signals (reach completed + target touch + gaze on target), plus `gaze_validated_piece`
+  (which piece the eyes committed to). `touched_piece`/`touched_cell` are included as
+  **experimental** (the cheap occlusion cannot yet separate the fingertip from the arm) and do
+  not drive `error_type`. Per-cell occlusion ([`getCellOcclusionMap`](src/core/BoardHandler.py))
+  and **panel presence** are recorded in `signal_trace`.
+- **Provenance + guards**: every output records `run_config` (mode, topic, offline, frame range);
+  `store_results` warns when a run is **incomplete** (likely subsampled) or a **partial** segment.
+- **Config-safety check** ([`check_correct_trials.py`](src/tools/check_correct_trials.py)): flags
+  per-participant exception sequences that turn a **real trial into a discarded `-1`** without a
+  documented reason (caught 001/035/055).
+- **Debug figures for flagged trials** ([`debug_flagged_trials.py`](src/tools/debug_flagged_trials.py)):
+  gaze path + target/touched/validated markers + a zoomed board thumbnail at the press, into each
+  participant's `debug_figures/`.
+- **HTML report — "Comportamiento" tab** ([`generate_report.py`](src/tools/generate_report.py)):
+  an exploratory behaviour summary for the analysis team (and developer debug), from the latest
+  run: gaze-by-target **colour/shape confusion matrices** (search guided by colour > shape vs the
+  balanced-board 25%/20% chance), per-target **found (gaze) vs touched (occlusion)** rates (red the
+  hardest to discriminate), a **time-to-X selector** (verifica / encuentra / mano entra / toque;
+  default *verifica* — the cleanest cognitive measure and best detected), and **per-colour response
+  time across blocks** (familiarisation + the block-3 rotation bump).
+- **Whole-board occlusion masks** for the documentation: the `board_occ` counterpart of the
+  target-cell touch masks (current board / clean reference / diff / change mask), captured via
+  `_dbg_board_masks` and dumped by `process_video --dump_frames`.
+- **Documentation figures reworked** ([`generate_doc_figures.py`](src/tools/generate_doc_figures.py)):
+  two-view occlusion **bump** and **phase-timeline** figures (full panel-to-panel cycle + zoomed
+  detail), touch masks as separate clean-vs-touch comparisons, a varied-piece **trajectory gallery**,
+  cross-plot colour coherence, and bilingual (`_eng`) variants; the default output root tracks
+  `__version__`. Gaze-drift diagnostics in [`gaze_drift_figures.py`](src/tools/gaze_drift_figures.py).
+
+### Changed
+- **Slow/precise is the DEFAULT** in both entry points (`process_video.py`, `run_all.py`); the
+  fast ~6.5× subsampling is an explicit `--fast_analysis` opt-in (iteration only). The `-t topic`
+  default is `gaze` in both (was `fixations` in `process_video.py`).
+- `data_<id>.pkl` is the source of truth (it now carries `signal_trace`, `bump`, the wrong-piece
+  fields, `run_config`); the CSVs are a projection derived from it.
+
+### Fixed
+- **Fast-mode frame subsampling could miss a marginally-detected panel** and lose the whole
+  trial (measured: a first relaunch lost ~half the trials of 2 participants); the slow re-run
+  recovers them — it only affects *which trials are detected*, not the marks.
+- **001 block-4 exception config** wrongly turned the real trial 4 (red_hexagon) into a discarded
+  `-1` (present since the file was created → wrong in every version), desyncing the block;
+  reverted to the default. 035/055 `-1` (deliberate, the participant did not understand the task)
+  documented.
+
 ## [1.2.0](https://github.com/enheragu/eye_tracking_board/releases/tag/v1.2.0) - 2026-06-15
 
 Re-based trial model (homography + occlusion) and a complete per-trial timeline. The trial

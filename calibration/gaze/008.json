@@ -1,0 +1,105 @@
+{
+  "participant": "008",
+  "apply": false,
+  "calib_segment_times": [
+    -83.582,
+    56.572,
+    277.401
+  ],
+  "panel_offsets": [
+    {
+      "t": 34.97,
+      "off_x": 0.004716,
+      "off_y": -0.022465,
+      "seg": 0,
+      "n_dots": 8
+    },
+    {
+      "t": 136.608,
+      "off_x": 0.011827,
+      "off_y": 0.007636,
+      "seg": 1,
+      "n_dots": 8
+    },
+    {
+      "t": 262.398,
+      "off_x": 0.012297,
+      "off_y": -0.002149,
+      "seg": 1,
+      "n_dots": 7
+    },
+    {
+      "t": 389.446,
+      "off_x": -0.01724,
+      "off_y": 0.036401,
+      "seg": 2,
+      "n_dots": 3
+    },
+    {
+      "t": 498.38,
+      "off_x": -0.01538,
+      "off_y": -0.030776,
+      "seg": 2,
+      "n_dots": 1
+    }
+  ],
+  "stats": {
+    "base_px": 38.71,
+    "corr_px": 38.28,
+    "gain": 0.011,
+    "gain_lo": -0.137,
+    "gain_hi": 0.209,
+    "n_points": 26
+  },
+  "uncertainty": {
+    "jitter_cov_px": {
+      "sigma_major": 17.88,
+      "sigma_minor": 16.84,
+      "angle_deg": 63.2
+    },
+    "conf_var_factor": {
+      "conf": [
+        0.675,
+        0.8,
+        0.89,
+        0.955,
+        0.995
+      ],
+      "factor": [
+        1.554,
+        1.044,
+        0.685,
+        0.525,
+        0.525
+      ]
+    },
+    "spatial_var_factor": {
+      "model": "radial_ecc_px",
+      "ecc": [
+        122.3,
+        201.6,
+        293.5
+      ],
+      "factor": [
+        0.964,
+        0.988,
+        1.023
+      ]
+    },
+    "jitter_rms_px": 24.56,
+    "n_samples": 5336,
+    "units": "image px (1280x720); Sigma_meas = jitter_cov * conf_var_factor(conf) * spatial_var_factor(ecc)",
+    "bias_cov_px": [
+      [
+        848.0576540491567,
+        -115.92911133952279
+      ],
+      [
+        -115.92911133952279,
+        910.9225982005433
+      ]
+    ]
+  },
+  "fingerprint": "44095fb34483",
+  "units": "normalized image coords, origin top-left; subtract off from [x, 1-y]"
+}

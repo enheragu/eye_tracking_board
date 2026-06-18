@@ -1,10 +1,10 @@
 <h1>Data extraction from visual search experiments in natural environments</h1>
 
-## Table of contents
-- [Table of contents](#table-of-contents)
+## Table of contents <!-- omit in toc -->
 - [Introduction](#introduction)
 - [Code description](#code-description)
 - [Installation And Usage](#installation-and-usage)
+  - [What it produces](#what-it-produces)
 - [Contributions and Dissemination](#contributions-and-dissemination)
 - [Contributors and Contact Information](#contributors-and-contact-information)
 
@@ -50,13 +50,20 @@ The software processes the Pupil Labs recordings (world video + gaze) and
 reconstructs, for each trial, which board cell the participant was looking at and
 for how long. Documentation (Spanish):
 
-- **[Processing guide](docs/guia_procesamiento.md)** — user-facing: what the outputs mean
-  and how to interpret them.
+- **[Processing guide](docs/guia_procesamiento.md)** — start here. User-facing: what the
+  outputs mean and how to interpret them. Self-contained for analysing the CSVs.
 - **[Technical documentation](docs/documentacion_tecnica.md)** — how it works inside (board
-  localization/homography, contour detection, touch detector, state machine, measured
-  engineering findings).
+  localization/homography, contour detection, touch detector, state machine, gaze drift
+  correction, a **per-sample gaze uncertainty model** —each gaze as a covariance ellipse →
+  probabilistic cell mapping and a graded `target_found_confidence`—, measured engineering findings).
+- **[Dataset characterization](docs/caracterizacion_dataset.md)** — the 22 recordings actually
+  processed here: per-participant capture configuration (mapping model, eye, gaze rate,
+  calibrations) and why they are heterogeneous.
+- **[Experimental-design recommendations](docs/recomendaciones_diseno_experimental.md)** — for the
+  methodology team: what to change in a future recording to make processing more robust, each
+  point grounded in a concrete case from this cohort.
 
-Version history is in the [CHANGELOG](CHANGELOG.md).
+Version history is in the [CHANGELOG](CHANGELOG.md); the current version is **1.4.0**.
 
 Repository layout:
 
@@ -69,7 +76,7 @@ Repository layout:
 | `cfg/` | Board, ArUco, sample-panel and trial-sequence configuration. |
 | `calibration/` | Camera calibration data (`camera_calib.json`). |
 | `scripts/` | Shell wrappers. |
-| `docs/` | Processing guide and media assets. |
+| `docs/` | Documentation (processing guide, technical, dataset characterization, design recommendations) and media assets. |
 
 ## Installation And Usage
 
@@ -96,9 +103,12 @@ with `--data_root`/`--output_root` (or the `EEHA_DATA_ROOT`/`EEHA_OUTPUT_ROOT`
 environment variables). Outputs are stored under `OutputData_v<version>/<topic>/<id>/`
 so results of different software versions never mix.
 
+Slow/precise analysis is the **default**; `--fast_analysis` opts into a ~6.5× subsampled
+run that is only meant for quick iteration (it may miss marginally-detected trial starts).
+
 ```sh
-    # One participant (debug visualization with -v)
-    python3 src/process_video.py -p 002 -t gaze --slow_analysis
+    # One participant (add -v for the debug visualization)
+    python3 src/process_video.py -p 002 -t gaze
 
     # All participants found in the data root, in parallel
     python3 src/run_all.py
@@ -106,6 +116,21 @@ so results of different software versions never mix.
     # Compare the outputs of two software versions at a glance
     python3 src/tools/compare_outputs.py --old <old_output_root> --new <new_output_root>
 ```
+
+### What it produces
+
+For each participant, under `OutputData_v<version>/<topic>/<id>/`, the run writes (see the
+[processing guide](docs/guia_procesamiento.md) for the full column-by-column meaning):
+
+| File | Content |
+|---|---|
+| `trials_data_<id>.csv` | Per-trial summary — the base for most analyses. |
+| `trials_data_<id>_sequence.csv` | The gaze path over time (one row per gaze sample, tagged by phase). |
+| `trials_data_<id>_transitions.csv` | The trial timeline: state changes and behavioural marks (touch, hand exit, ...) interleaved by frame. |
+| `data_<id>.yaml` / `data_<id>.pkl` | All of the above, human-readable and Python-loadable respectively. |
+
+A batch run additionally produces an HTML report and batch CSVs (e.g.
+`informe_comparativa_frequencies.csv`, with the empirically-measured per-participant gaze rate).
 
 
 ## Contributions and Dissemination
@@ -139,3 +164,11 @@ Below is a summary of the key presentations and publications associated with the
   
 
 ## Contributors and Contact Information
+
+This processing pipeline is developed and maintained by **Enrique Heredia-Aguado**
+(<enrique.he.ag@gmail.com>) as part of an interdisciplinary collaboration at the Universidad
+Miguel Hernández (UMH), in coordination with the visual-search research team listed in the
+presentations above (M. Pilar Aivar, Victoria Plaza, Laura Cepero Amores and colleagues).
+
+For questions about the code, the processed outputs, or reusing the pipeline, open an issue on
+the repository or contact the maintainer at the address above.

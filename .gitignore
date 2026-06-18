@@ -4,6 +4,11 @@ __pycache__/
 
 # Input/output data lives on the external drive, never in the repo
 data/
+OutputData_*/
+
+# Calibration backups (timestamped copies created when re-running the gaze calibration;
+# the committed artifacts live in calibration/gaze/)
+calibration/gaze.bak_*
 
 # Raw captures and data artifacts (the repo keeps results, e.g. camera_calib.json,
 # not the raw videos/zips)

@@ -1,0 +1,48 @@
+/*
+ * Estilo para exportar la documentación a PDF con la extensión de VSCode
+ * "Markdown PDF" (yzane.markdown-pdf), que renderiza con Chromium (HTML/CSS).
+ *
+ * Uso: en settings.json del workspace,
+ *   "markdown-pdf.styles": ["docs/pdf_style.css"],
+ *   "markdown-pdf.format": "A4"
+ *
+ * Objetivo: que ninguna imagen desborde el ancho de página y que las tablas
+ * "antes/después" (dos imágenes por fila) repartan el ancho de forma uniforme,
+ * manteniendo el markdown limpio (en GitHub se sigue viendo responsive).
+ */
+
+/* Ninguna imagen más ancha que el texto; conserva proporción. */
+img {
+  max-width: 100%;
+  height: auto;
+}
+
+/* Tablas a ancho completo con columnas uniformes (clave para las tablas de
+   comparación con dos capturas de 1280px lado a lado: cada una cabe en su mitad). */
+table {
+  width: 100%;
+  table-layout: fixed;
+  border-collapse: collapse;
+}
+th, td {
+  vertical-align: top;
+  word-wrap: break-word;
+}
+td img, th img {
+  max-width: 100%;
+  height: auto;
+}
+
+/* Evitar que una figura, tabla o bloque de código se parta entre páginas. */
+img, table, pre {
+  page-break-inside: avoid;
+}
+
+/* Densidad de texto razonable en A4. */
+body {
+  font-size: 11px;
+  line-height: 1.45;
+}
+h1, h2, h3 {
+  page-break-after: avoid;
+}

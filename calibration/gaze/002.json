@@ -1,0 +1,114 @@
+{
+  "participant": "002",
+  "apply": false,
+  "calib_segment_times": [
+    -9.236,
+    35.503,
+    141.373,
+    168.747,
+    346.657
+  ],
+  "panel_offsets": [
+    {
+      "t": 22.414,
+      "off_x": -0.002023,
+      "off_y": 0.006393,
+      "seg": 0,
+      "n_dots": 9
+    },
+    {
+      "t": 134.735,
+      "off_x": -0.006702,
+      "off_y": 0.013414,
+      "seg": 1,
+      "n_dots": 7
+    },
+    {
+      "t": 231.442,
+      "off_x": -0.003093,
+      "off_y": 0.028339,
+      "seg": 3,
+      "n_dots": 7
+    },
+    {
+      "t": 333.438,
+      "off_x": -0.000518,
+      "off_y": 0.023492,
+      "seg": 3,
+      "n_dots": 8
+    },
+    {
+      "t": 451.551,
+      "off_x": 0.003872,
+      "off_y": 0.009139,
+      "seg": 4,
+      "n_dots": 8
+    },
+    {
+      "t": 523.326,
+      "off_x": -0.001076,
+      "off_y": -0.006821,
+      "seg": 4,
+      "n_dots": 8
+    }
+  ],
+  "stats": {
+    "base_px": 34.69,
+    "corr_px": 33.8,
+    "gain": 0.026,
+    "gain_lo": -0.113,
+    "gain_hi": 0.069,
+    "n_points": 47
+  },
+  "uncertainty": {
+    "jitter_cov_px": {
+      "sigma_major": 21.1,
+      "sigma_minor": 15.41,
+      "angle_deg": 62.0
+    },
+    "conf_var_factor": {
+      "conf": [
+        0.675,
+        0.8,
+        0.89,
+        0.955,
+        0.995
+      ],
+      "factor": [
+        1.144,
+        1.049,
+        1.022,
+        0.869,
+        0.869
+      ]
+    },
+    "spatial_var_factor": {
+      "model": "radial_ecc_px",
+      "ecc": [
+        128.8,
+        259.4,
+        371.5
+      ],
+      "factor": [
+        1.112,
+        1.146,
+        0.987
+      ]
+    },
+    "jitter_rms_px": 26.13,
+    "n_samples": 12478,
+    "units": "image px (1280x720); Sigma_meas = jitter_cov * conf_var_factor(conf) * spatial_var_factor(ecc)",
+    "bias_cov_px": [
+      [
+        599.3182367045014,
+        -301.06317986885995
+      ],
+      [
+        -301.06317986885995,
+        987.965368904335
+      ]
+    ]
+  },
+  "fingerprint": "44095fb34483",
+  "units": "normalized image coords, origin top-left; subtract off from [x, 1-y]"
+}
