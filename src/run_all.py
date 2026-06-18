@@ -44,8 +44,10 @@ def runParticipant(participant, args, env):
     cmd = [sys.executable, os.path.join(CURRENT_FILE_PATH, 'process_video.py'),
            '-p', participant, '-t', args.topic,
            '--data_root', args.data_root, '--output_root', args.output_root]
-    if not args.fast_analysis:
-        cmd.append('--slow_analysis')
+    # Both entry points DEFAULT to slow/precise; fast is an explicit opt-in passed through
+    # only when requested, so neither path can silently produce a subsampled output.
+    if args.fast_analysis:
+        cmd.append('--fast_analysis')
 
     start = time.time()
     with open(log_path, 'w') as log_file:
@@ -62,7 +64,8 @@ def main():
                         help='Simultaneous participants to process.')
     parser.add_argument('--cv_threads', type=int, default=2, help='OpenCV threads for each job.')
     parser.add_argument('--fast_analysis', action='store_true', default=False,
-                        help='Disable --slow_analysis (faster, less precise transition detection).')
+                        help='Opt into fast subsampling (~6.5x) for ITERATION only: it can miss '
+                             'marginally-detected trial starts (lost trials). Default is slow/precise.')
     parser.add_argument('--data_root', type=str, default=DEFAULT_DATA_ROOT)
     parser.add_argument('--output_root', type=str, default=DEFAULT_OUTPUT_ROOT)
     args = parser.parse_args()

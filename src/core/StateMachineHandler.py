@@ -4,7 +4,7 @@ import os
 import copy
 
 import math
-from collections import deque
+from collections import deque, Counter
 import cv2 as cv
 import numpy as np
 
@@ -54,6 +54,42 @@ def IsSamePanel(panel1, panel2):
     return (panel1['color'] == panel2['color'] and \
            panel1['shape'] == panel2['shape'])
 
+
+def _phi(z):
+    """Standard normal CDF."""
+    return 0.5 * (1.0 + math.erf(z / 1.4142135623730951))
+
+
+def _cell_mass(mx, my, sx, sy, col, row, ncols, nrows):
+    """Gaussian probability mass inside cell (col,row), independent-axes (marginal)
+    approximation. mx,my and the cell are in board-normalised coords (0..1)."""
+    xl, xh = col / ncols, (col + 1) / ncols
+    yl, yh = row / nrows, (row + 1) / nrows
+    return ((_phi((xh - mx) / sx) - _phi((xl - mx) / sx)) *
+            (_phi((yh - my) / sy) - _phi((yl - my) / sy)))
+
+
+def _cell_distribution(mx, my, cov, ncols, nrows, topk=3, min_mass=0.02):
+    """Top-k cells by Gaussian mass + total on-board mass, from a board-norm centroid
+    and 2x2 covariance (marginal variances). Returns (dist_string, onboard_mass) where
+    dist_string is 'col,row:mass|...'. ('', '') when no covariance is available."""
+    if cov is None or mx is None:
+        return '', ''
+    sx = max(cov[0][0], 1e-9) ** 0.5
+    sy = max(cov[1][1], 1e-9) ** 0.5
+    cells, onboard = [], 0.0
+    for c in range(ncols):
+        for r in range(nrows):
+            m = _cell_mass(mx, my, sx, sy, c, r, ncols, nrows)
+            onboard += m
+            if m >= min_mass:
+                cells.append((m, c, r))
+    cells.sort(reverse=True)
+    dist = '|'.join(f"{c},{r}:{m:.2f}" for m, c, r in cells[:topk])
+    # the marginal (independent-axes) approximation can sum slightly above 1.0; clamp.
+    return dist, round(min(onboard, 1.0), 3)
+
+
 class ExceptionNoMoreBlocks(Exception):
     def __init__(self, message):
         super().__init__(message)
@@ -66,6 +102,11 @@ class StateMachine:
         # Estado init
         self.current_state = "init"
         self.video_fps = video_fps
+        # Execution mode is recorded in the output (provenance): the fast path subsamples
+        # init/get_test_name and can MISS a marginally-detected panel (trial start), so the
+        # result quality must never be silently mode-dependent -- store_results warns if a
+        # run came out incomplete, and this flag tells which mode produced the data.
+        self.slow_analysis = slow_analysis
 
         self.board_handler = board_handler
         self.panel_handler = panel_handler
@@ -76,7 +117,12 @@ class StateMachine:
         # with any other id are spurious (the detector sometimes fires id 0 on board
         # pieces); they are dropped before any processing or drawing.
         self.valid_aruco_ids = set(self.board_handler.aruco_board_handler.config_ids)
+        # ids that belong to a STIMULUS PANEL (not the board): used to flag, per frame, whether
+        # a panel is still physically present while the touch is being measured -- a fast touch
+        # with the panel not fully removed could contaminate the target occlusion (fT).
+        self.panel_aruco_ids = set()
         for panel in self.panel_handler.panel_handler_list:
+            self.panel_aruco_ids |= set(panel.config_ids)
             self.valid_aruco_ids |= panel.config_ids
 
         # Per-marker corner history to damp the homography jitter (see smoothArucos)
@@ -117,7 +163,17 @@ class StateMachine:
         self.board_contour_start_confirm_threshold = 6
         self.contour_streak_start_frame = None
         self.panel_detected_counter = []
-        self.panel_detected_threshold = 2
+        # Consecutive frames a panel must be seen before it latches. Raised 2 -> 4 to reject
+        # spurious / misread ArUco false positives: a misread is a brief blip of ONE marker
+        # (e.g. 204 read 2 frames while another card was being removed, faking a red_triangle
+        # panel and cascading 3 trials to error in one participant), whereas a real card is
+        # shown for many frames. The 2-frame blip no longer reaches the threshold; real panels
+        # (incl. single-marker blue_circle/yellow_circle, which persist) are unaffected
+        # (validated: 001 misread fixed, 0 real panels lost across 5 participants). A colour
+        # check on the card figure was tried first but the fixed/sampled hue did not generalise
+        # across participants (white balance) and rejected valid panels -- the temporal
+        # persistence is colour-free and robust.
+        self.panel_detected_threshold = 4
 
         ## Target-touch MARK (best-effort, does NOT close the trial): records when the
         # hand TOUCHES the target piece (it is not removed from the board). The touch is
@@ -158,6 +214,34 @@ class StateMachine:
         self.target_warmup_end = None
         self.target_tracking_active = False
 
+        # target_found: the eyes must DWELL on the target cell (a sustained
+        # fixation), not just sweep over it once. The old rule (first single gaze
+        # sample on the target) fired on a fleeting pass on the way elsewhere
+        # (false positive). We detect fixations with a dispersion criterion (I-DT):
+        # a fixation is a run of >= target_found_min_fixation_samples gaze samples
+        # whose board-normalized positions stay within a small spatial spread
+        # (bounding-box extent < target_found_fixation_dispersion). A WINDOWED
+        # dispersion is robust where a single per-sample velocity is not: two near
+        # samples can still belong to a fast transit (the window spreads out), and
+        # slow wandering AROUND the target stays compact (still a fixation on it).
+        # target_found = the first fixation whose mean per-sample ELLIPSE MASS on the
+        # target cell reaches target_found_mass_threshold, marked at the fixation start.
+        # This is uncertainty-aware: a fixation hugging the cell boundary (centroid
+        # technically inside but the ellipse split with the neighbour) is not forced to
+        # a hard yes by a discrete majority vote -- it is found only if enough of its
+        # probability mass actually lands on the target. Falls back to the discrete
+        # majority vote when a fixation has no covariance (no uncertainty model).
+        self.target_found_min_fixation_samples = 6
+        # bounding-box extent (dx+dy, board-normalized) below which a window is a
+        # fixation. A cell is ~1/8 wide; allow some wander around it. Tunable;
+        # validate against measured fixation/transit dispersions on real trials.
+        self.target_found_fixation_dispersion = 0.06
+        # mean ellipse mass on the target cell (over a fixation) required to call it
+        # found. Measured on the 22-participant cohort: 0.30 rescues ~52 near-miss
+        # trials the discrete vote discarded while dropping only 3 boundary-hugging
+        # ones; ~0.34 is a fixation centred exactly on the target/neighbour border.
+        self.target_found_mass_threshold = 0.30
+
         ## Motor recovery: after the trial end is decided, keep watching until the
         # board contour comes back in a sustained way (the hand left the board) to
         # record hand_exit, then close. Confirms the touch was final (hand withdrew)
@@ -167,6 +251,20 @@ class StateMachine:
         self.motor_recovery_confirm = 3       # sustained contour = hand out of board
         self.motor_recovery_miss_tolerance = 2  # contour flickers as the hand withdraws;
         # a couple of dropped frames must not reset the streak (that lost hand_exit)
+        # If the earliest occlusion rise comes more than this many frames after the live
+        # contour-loss, that contour-loss had no hand over the board (homography flicker /
+        # edge hand not occluding the cells) -> artifact; motor_onset is moved to the real
+        # occlusion rise. Below it, the contour-loss is a validated entry and is kept.
+        self.motor_onset_artifact_gap = 15
+        # A cell must be occluded at least this much (fraction of its area in the board_occ
+        # mask) at the press to count as TOUCHED when the target itself was never touched.
+        self.wrong_touch_min_occ = 0.15
+        # A touched cell must also be FOCAL: occluded clearly more than its cleanest neighbour
+        # (occ * focality above this). Rejects the wide uniform arm band, keeps the fingertip.
+        self.wrong_touch_min_focality = 0.20
+        # Minimum ACCUMULATED focal occlusion for a cell to count as touched (sustained press,
+        # not a swept arm cell). Tuned visually on the debug figures.
+        self.wrong_touch_min_score = 1.0
         self.motor_recovery_deadline = None
         self.motor_recovery_streak = 0
         self.motor_recovery_misses = 0
@@ -181,6 +279,9 @@ class StateMachine:
         # contour-based path when the board pose is unavailable.
         self.board_occ_active = False       # hand_occ tracking runs (clean ref captured)
         self.board_occ_peak = 0.0
+        self.cell_occ_at_peak = None   # per-cell occlusion snapshot at the board_occ peak (touched cell)
+        self.cell_occ_at_peak_frame = None
+        self.cell_touch_score = None   # accumulated per-cell FOCAL occlusion (sustained fingertip)
         self.board_occ_exit_streak = 0
         self.board_occ_exit_start_frame = None
         self.last_board_occ = None          # last whole-board occlusion (for the trace)
@@ -196,6 +297,13 @@ class StateMachine:
         self.board_occ_enter_level = 0.12   # peak occlusion proving the hand entered
         self.board_occ_exit_level = 0.05    # occlusion back to ~baseline = hand left
         self.board_occ_exit_confirm = 3     # sustained frames to confirm the return
+        # POST-HOC hand_exit from the occlusion CURVE (v1.3): the live thresholds miss
+        # heavy/slow withdrawals where fT dips after the touch but the NEXT trial's panel
+        # re-occludes before the absolute floor is confirmed (measured on the 241 misses).
+        # With the full recorded signal_trace we find the withdrawal as the first frame
+        # after the touch where fT falls to this FRACTION of the touch peak. Only FILLS
+        # misses (never overrides a live hand_exit).
+        self.posthoc_exit_ratio = 0.30
 
         ## DIAGNOSTICS (Fase 0, v1.2.0). Per-trial in-memory time series of the cheap
         # occlusion measures already computed during the watched window. Kept in memory
@@ -263,13 +371,27 @@ class StateMachine:
                 # States that do not project gaze (init/get_test_name): show it anyway
                 classification = [(self.distortion_handler.correctCoordinates(coord, homography=None)[0], 'unprocessed')
                                   for coord in self.desnormalized_coord_list]
-            for und_coord, kind in classification:
+            for index, (und_coord, kind) in enumerate(classification):
                 if und_coord[0] < 0 or und_coord[1] < 0:
                     continue
                 cx, cy = int(und_coord[0]), int(und_coord[1])
-                cv.circle(canvas, (cx, cy), 8, (20, 20, 20), thickness=-1)
-                cv.circle(canvas, (cx, cy), 6, GAZE_COLORS.get(kind, (255, 255, 255)), thickness=-1)
-                cv.circle(canvas, (cx, cy), 8, (245, 245, 245), thickness=1, lineType=cv.LINE_AA)
+                color = GAZE_COLORS.get(kind, (255, 255, 255))
+                # uncertainty ellipse (image space, 1-sigma + 2-sigma), consistent with the
+                # trajectory figures. Skipped for panel / covered-cell gaze (not board gaze).
+                cov = self.gaze_cov_list[index] if index < len(self.gaze_cov_list) else None
+                if cov is not None and kind not in ('on_panel', 'blank'):
+                    Wd, Hd = 1280.0, 720.0
+                    cpx = np.array([[cov[0][0] * Wd * Wd, cov[0][1] * Wd * Hd],
+                                    [cov[1][0] * Hd * Wd, cov[1][1] * Hd * Hd]])
+                    wv, vv = np.linalg.eigh(cpx)
+                    ang = float(np.degrees(np.arctan2(vv[1, 1], vv[0, 1])))
+                    for ksig, th in ((2.0, 1), (1.0, 2)):
+                        ax_len = (int(ksig * np.sqrt(max(wv[1], 0.0))), int(ksig * np.sqrt(max(wv[0], 0.0))))
+                        if ax_len[0] > 0 and ax_len[1] > 0:
+                            cv.ellipse(canvas, (cx, cy), ax_len, ang, 0, 360, color, th, lineType=cv.LINE_AA)
+                # centre as an X (matches the trajectory marker)
+                cv.drawMarker(canvas, (cx, cy), (20, 20, 20), cv.MARKER_TILTED_CROSS, 16, 4)
+                cv.drawMarker(canvas, (cx, cy), color, cv.MARKER_TILTED_CROSS, 13, 2)
 
         ## Status panel (top-left). proc FPS = processing speed of the software (not
         # the video nor playback rate)
@@ -345,24 +467,32 @@ class StateMachine:
         return canvas, cv.resize(canvas, (frame_width, frame_height))
         
     def processPanel(self, undistorted_image, capture_idx, desnormalized_coord_list):
+        # processPanel may be invoked more than once for the SAME video frame (the step()
+        # while-loop chains callbacks); evaluate ONCE per frame so the persistence counter
+        # measures N consecutive VIDEO frames, not N callback steps.
+        if capture_idx == getattr(self, '_panel_eval_frame', None):
+            return self._panel_eval_result
+        self._panel_eval_frame = capture_idx
+
         current_panel = None
         self.panel_handler.step(undistorted_image, self.corners, self.ids)
-
-        shape, aruco, panel = self.panel_handler.getPixelInfo(desnormalized_coord_list)
         current_detected_panel = self.panel_handler.getCurrentPanel()
 
         if current_detected_panel is None:
             self.panel_detected_counter = []
-            return current_panel
-        
-        if self.panel_detected_counter == []:
+        elif (not self.panel_detected_counter
+              or not IsSamePanel(current_detected_panel, self.panel_detected_counter[-1])):
+            # first detection OR a DIFFERENT panel -> (re)start the consecutive count on it.
+            # Resetting on a different panel is essential: otherwise a new panel B could never
+            # reach the threshold while the counter stays latched on the old panel A.
+            self.panel_detected_counter = [current_detected_panel]
+        else:
             self.panel_detected_counter.append(current_detected_panel)
-        elif IsSamePanel(current_detected_panel, self.panel_detected_counter[-1]):
-            self.panel_detected_counter.append(current_detected_panel)
-        
-        if len(self.panel_detected_counter) >= self.panel_detected_threshold:
+
+        if current_detected_panel is not None and len(self.panel_detected_counter) >= self.panel_detected_threshold:
             current_panel = current_detected_panel
 
+        self._panel_eval_result = current_panel
         return current_panel
 
     ## Averages each marker's corners over the last few frames to damp the sub-pixel
@@ -432,6 +562,7 @@ class StateMachine:
         self.last_frame_number = capture_idx
 
         self.norm_coord_list = self.eye_data_handler.step(capture_idx)
+        self.gaze_cov_list = getattr(self.eye_data_handler, 'last_cov_list', None) or []
         self.gaze_classification = []
         self.desnormalized_coord_list = []
         for norm_coord in self.norm_coord_list:
@@ -678,6 +809,9 @@ class StateMachine:
             self.board_handler.board_occ_ref = None
             self.board_occ_active = True
             self.board_occ_peak = 0.0
+            self.cell_occ_at_peak = None   # per-cell occlusion snapshot at the board_occ peak (touched cell)
+            self.cell_occ_at_peak_frame = None
+            self.cell_touch_score = None   # accumulated per-cell FOCAL occlusion (sustained fingertip)
 
         if self.is_error_init_state(undistorted_image, capture_idx, desnormalized_coord_list): return
 
@@ -689,7 +823,9 @@ class StateMachine:
 
         for index, coord_data in enumerate(coord_data_list):
             color, shape, slot, board_coord, corrected_coord = coord_data
-            self.recordGazeSample(capture_idx, color, shape, slot, board_coord, corrected_coord, phase='execution')
+            cov_img = self.gaze_cov_list[index] if index < len(self.gaze_cov_list) else None
+            self.recordGazeSample(capture_idx, color, shape, slot, board_coord, corrected_coord, phase='execution',
+                                  cov_img=cov_img, desnorm_coord=desnormalized_coord_list[index])
             und_coord = self.distortion_handler.correctCoordinates(desnormalized_coord_list[index], homography=None)[0]
             self.gaze_classification.append((und_coord, 'execution' if color != 'not_board' else 'not_board'))
 
@@ -813,20 +949,71 @@ class StateMachine:
         if board_occ is not None:
             # board_occ_peak (the hand was clearly over the board) gates the hand_exit
             # detection below. The contour-based motor_onset is the hand-entry mark.
+            # Per-cell occlusion RUNNING MAX over the reach+recovery: captures which cells the
+            # hand covered even for a LOCAL touch that barely moves the whole-board board_occ
+            # (those never reached a board_occ peak and were missed before). The touched cell is
+            # then picked by focality (fingertip), not by the raw max (which is the arm).
+            cell_map = self.board_handler.getCellOcclusionMap()
+            if cell_map is not None:
+                self.cell_occ_at_peak = cell_map if self.cell_occ_at_peak is None \
+                    else np.maximum(self.cell_occ_at_peak, cell_map)
+                # Accumulate per-cell FOCALITY over the whole reach. A fingertip RESTS on one
+                # cell (focal every frame -> high accumulated score); the arm SWEEPS (each cell
+                # focal only in passing -> low score). The touched cell = the sustained-focal max.
+                foc = self._focalOcc(cell_map)
+                self.cell_touch_score = foc if self.cell_touch_score is None else self.cell_touch_score + foc
+            if board_occ > self.board_occ_peak:
+                self.cell_occ_at_peak_frame = capture_idx   # ~ the press (max hand over board)
             self.board_occ_peak = max(self.board_occ_peak, board_occ)
-        return board_occ
+
+    def _focalOcc(self, occ):
+        """Per-cell focality = how much MORE occluded a cell is than its surroundings (median of
+        its 8 neighbours), clamped >= 0 and only where the cell itself is occluded. A fingertip
+        pressing one cell is focal; the wide uniform arm band is not (neighbours equally covered)."""
+        occ = np.asarray(occ, dtype=float)
+        R, C = occ.shape
+        foc = np.zeros_like(occ)
+        for r in range(R):
+            for c in range(C):
+                if occ[r, c] < self.wrong_touch_min_occ:
+                    continue
+                neigh = [occ[r + dr, c + dc] for dr in (-1, 0, 1) for dc in (-1, 0, 1)
+                         if (dr or dc) and 0 <= r + dr < R and 0 <= c + dc < C]
+                if neigh:
+                    foc[r, c] = max(0.0, occ[r, c] - float(np.median(neigh)))
+        return foc
 
     ## Surgical per-frame trace of the touch / hand_exit signals from the REAL code
     # (EEHA_TRACE_TOUCH=1). Run a narrow window with --start_frame/--end_frame.
     def _traceTouch(self, capture_idx, phase):
+        occ = self.last_occlusion_measure
+        grid = 'ref' if getattr(self.board_handler, 'grid_from_reference', False) \
+               else ('cont' if self.board_handler.cell_matrix is not None else 'none')
+        # PERSIST a compact per-frame signal trace (always on, cheap: one small dict
+        # per watched frame). It records the touch/hand signals over time so the entry
+        # and exit can be detected/validated POST-HOC with the FULL occlusion profile
+        # (lookahead): a border cut is a real hand only if the occlusion then rises; a
+        # hand_exit only if it then stays low. Also enables flagging border false
+        # positives (contour lost while the board pose was unreliable -> grid='ref').
+        # Panel still present this frame: any stimulus-panel ArUco among the detections means
+        # the card has not been fully removed -- a touch measured while panel=1 may have its
+        # target occlusion (fT) contaminated by the panel, not the finger (flaggable post-hoc).
+        panel_now = int(bool(self.panel_aruco_ids & set(np.asarray(self.ids).flatten().tolist()))) \
+            if self.ids is not None else 0
+        self.board_metrics_now.setdefault('signal_trace', []).append({
+            'f': capture_idx, 'ph': phase[:4],
+            'fT': round(occ[0], 3) if occ is not None else None,     # target occlusion
+            'fC': round(occ[1], 3) if occ is not None else None,     # control occlusion (separation)
+            'bocc': round(self.last_board_occ, 3) if self.last_board_occ is not None else None,
+            'cont': int(self.board_handler.contour_detected_raw),
+            'homog': int(self.board_handler.homography is not None),
+            'panel': panel_now,
+            'grid': grid, 'act': int(self.target_tracking_active)})
         if not TRACE_TOUCH:
             return
-        occ = self.last_occlusion_measure
         fT = f"{occ[0]:.2f}" if occ is not None else "  - "
         fC = f"{occ[1]:.2f}" if occ is not None else "  - "
         bo = f"{self.last_board_occ:.3f}" if self.last_board_occ is not None else "  -  "
-        grid = 'ref' if getattr(self.board_handler, 'grid_from_reference', False) \
-               else ('cont' if self.board_handler.cell_matrix is not None else 'none')
         log(f"[TRACE {phase:11s} {capture_idx}] act={int(self.target_tracking_active)} "
             f"H={int(self.board_handler.homography is not None)} cont={int(self.board_handler.contour_detected_raw)} "
             f"grid={grid:>4s} fT={fT} fC={fC} tcnt={self.target_occlusion_counter} "
@@ -838,7 +1025,11 @@ class StateMachine:
     METADATA_KEYS = ('init_capture', 'end_capture', 'early_init_capture', 'motor_onset_capture',
                      'target_touch_capture', 'hand_exit_capture', 'sequence', 'trial_id', 'status',
                      'target_cord', 'target_norm_coord', 'transition_error', 'missing_trial_error',
-                     'touch_diag', 'hand_exit_source')
+                     'touch_diag', 'hand_exit_source', 'signal_trace',
+                     'hand_exit_live', 'hand_exit_live_source', 'bump',
+                     'target_touch_live', 'motor_onset_live', 'motor_onset_source', 'cell_occ_peak',
+                     'cell_occ_peak_frame', 'cell_touch_score', 'touched_cell', 'touched_piece', 'gaze_validated_cell',
+                     'gaze_validated_piece', 'frame_validation', 'wrong_touch_frame', 'error_type')
 
     ## Derives, from the in-memory occlusion series, WHY the target touch was (not)
     # detected, so the fallbacks can be targeted and the misses measured. Pure
@@ -879,6 +1070,107 @@ class StateMachine:
                                  'n_watched': len(series),
                                  'frac_grid_missing': round(frac_grid_missing, 3),
                                  'board_occ_peak': round(self.board_occ_peak, 3)}
+        # Per-cell occlusion at the board_occ peak (the press): lets store_results find which
+        # cell/piece the hand actually touched when the TARGET was not the one touched.
+        if self.cell_occ_at_peak is not None:
+            metrics['cell_occ_peak'] = [[round(float(v), 3) for v in row] for row in self.cell_occ_at_peak]
+            metrics['cell_occ_peak_frame'] = self.cell_occ_at_peak_frame
+        if self.cell_touch_score is not None:
+            metrics['cell_touch_score'] = [[round(float(v), 3) for v in row] for row in self.cell_touch_score]
+        # Re-derive hand_exit from the recorded occlusion curve (touch -> withdrawal): ONE
+        # uniform definition for every trial, not just the misses. It removes the
+        # source-dependent confirmation lag of the live detection (measured shift vs live:
+        # 0..3 frames earlier, i.e. the true crossing). The live frame is kept for audit.
+        if confirmed:
+            self._posthocBump(metrics)
+
+    def _bumpLandmarks(self, series, enter, anchor=None):
+        """Extract the reach bump on an occlusion (frame, value) series: rise (start of the
+        climb), peak (max), valley (end of the fall = first return to posthoc_exit_ratio of
+        the peak AFTER it, robust to the next trial's re-rise). Returns None if there is no
+        real bump (peak below `enter`). `anchor` (the touch frame) bounds the peak search so
+        the next trial's rise is not taken as the peak."""
+        pts = [(f, v) for f, v in series if v is not None]
+        if len(pts) < 6:
+            return None
+        fr = [f for f, _ in pts]
+        vv = [v for _, v in pts]
+        hi = (next((i for i, f in enumerate(fr) if f >= anchor), len(vv) - 1)
+              if anchor is not None else len(vv) - 1)
+        win = vv[:hi + 8]
+        peak = max(win, default=0.0)
+        if peak < enter:
+            return None
+        pk = win.index(peak)
+        lvl = self.posthoc_exit_ratio * peak
+        rs = pk
+        while rs > 0 and vv[rs - 1] > lvl:        # walk back the rising edge
+            rs -= 1
+        valley = next((fr[i] for i in range(pk + 1, len(vv)) if vv[i] <= lvl), None)
+        return {'rise': fr[rs], 'peak': fr[pk], 'peak_val': round(peak, 3), 'valley': valley}
+
+    def _posthocBump(self, metrics):
+        """Extract the reach landmarks on BOTH curves (target fT and whole-board board_occ)
+        and re-derive hand_exit consistently. hand_exit = hand off the BOARD = the board
+        bump's valley when there was a real whole-board occlusion (the arm covered the
+        board); for a local finger touch (board barely moves) it falls back to the target
+        valley, where the finger IS effectively the hand. Records all 6 landmarks in
+        metrics['bump'] for audit; keeps the live hand_exit frame."""
+        touch = metrics.get('target_touch_capture')
+        st = metrics.get('signal_trace', [])
+        tgt = self._bumpLandmarks([(s['f'], s.get('fT')) for s in st], self.ft_enter_level, anchor=touch)
+        brd = self._bumpLandmarks([(s['f'], s.get('bocc')) for s in st], self.board_occ_enter_level, anchor=touch)
+        metrics['bump'] = {'target': tgt, 'board': brd}
+        he = (brd['valley'] if (brd is not None and brd['valley'] is not None)
+              else (tgt['valley'] if tgt is not None else None))
+        if he is not None:
+            live, live_src = metrics.get('hand_exit_capture'), metrics.get('hand_exit_source')
+            if live is not None and live_src not in (None, 'curve'):
+                metrics['hand_exit_live'] = live          # keep the live frame for audit
+                metrics['hand_exit_live_source'] = live_src
+            metrics['hand_exit_capture'] = he
+            metrics['hand_exit_source'] = 'curve_board' if (brd is not None and brd['valley'] is not None) else 'curve_target'
+        # touch = the target PEAK (full contact), refined from the live rising-edge frame.
+        if tgt is not None:
+            if metrics.get('target_touch_capture') is not None:
+                metrics['target_touch_live'] = metrics['target_touch_capture']
+            metrics['target_touch_capture'] = tgt['peak']
+        # motor_onset = hand enters the board. The live contour-loss (board border ArUcos
+        # covered) is the natural entry, but it ALSO fires on homography flicker or a hand
+        # resting at the extreme edge WITHOUT occluding the cells: measured cases lose the
+        # contour while BOTH target (fT) and whole-board (board_occ) occlusion stay ~0 for
+        # ~1.7s, then a fast reach spikes them at the touch. So validate the contour-loss
+        # with the occlusion: if the earliest real occlusion rise (target or board) follows
+        # within motor_onset_artifact_gap it was a real entry and is kept; if it comes much
+        # later, the contour-loss had no hand over the board (artifact) and motor_onset is
+        # moved to the occlusion rise. The contour frame is kept as motor_onset_live.
+        contour = metrics.get('motor_onset_capture')
+        rise = min([r for r in ((tgt['rise'] if tgt else None), (brd['rise'] if brd else None))
+                    if r is not None], default=None)
+        if contour is not None and rise is not None and (rise - contour) > self.motor_onset_artifact_gap:
+            metrics['motor_onset_live'] = contour
+            metrics['motor_onset_capture'] = rise
+            # Classify WHY the contour-loss was spurious, from the trace between the lost
+            # contour and the real occlusion rise: a contour dropped while the homography
+            # was DOWN or the pose was unreliable (grid from reference) is a homography
+            # artifact; otherwise the hand was at the extreme edge without occluding cells.
+            win = [s for s in st if contour <= s['f'] < rise]
+            bad_h = sum(1 for s in win if not s.get('homog', 1) or s.get('grid') == 'ref')
+            metrics['motor_onset_source'] = ('curve_rise_homography'
+                                             if win and bad_h >= 0.5 * len(win) else 'curve_rise_edge')
+        # Temporal congruence: a real reach has BOTH rises before the touch (fT peak) and
+        # BOTH valleys after it. The order WITHIN each pair (board vs target) is free -- it
+        # only reflects reach geometry: a close/edge target is reached finger-first, before
+        # the arm occludes the board ('finger_led'), recorded as info, NOT an error. (A
+        # strict total order wrongly flagged ~24% of normal finger-led reaches.)
+        touch_f = tgt['peak'] if tgt else None
+        rises = [r for r in ((brd['rise'] if brd else None), (tgt['rise'] if tgt else None)) if r is not None]
+        valleys = [v for v in ((tgt['valley'] if tgt else None), he) if v is not None]
+        metrics['bump']['congruent'] = (touch_f is None
+                                        or (all(r <= touch_f + 3 for r in rises)
+                                            and all(touch_f <= v + 3 for v in valleys)))
+        if brd and tgt and brd.get('rise') is not None and tgt.get('rise') is not None:
+            metrics['bump']['reach_style'] = 'finger_led' if tgt['rise'] < brd['rise'] else 'arm_led'
 
     """
         Drops gaze samples recorded after end_frame and rebuilds the per color/shape
@@ -917,7 +1209,40 @@ class StateMachine:
         per color/shape counters; pre_start ones (gaze on board during the panel
         removal window) only join the sequence, flagged with their phase.
     """
-    def recordGazeSample(self, capture_idx, color, shape, slot, board_coord, corrected_coord, phase):
+    def _projectGazeCov(self, desnorm_coord, cov_img):
+        """Map a per-sample gaze covariance from normalised image coords (top-left) to
+        BOARD-NORM coords, via the numerical Jacobian of [correctCoordinates ->
+        getPixelBoardNorm] at this gaze point. Returns a 2x2 list or None."""
+        if cov_img is None or desnorm_coord is None or self.board_handler.cell_matrix is None:
+            return None
+        H = self.board_handler.homography
+        if H is None:
+            return None
+        base = np.asarray(desnorm_coord, float).reshape(-1)[:2]
+
+        def fwd(px):
+            cc = self.distortion_handler.correctCoordinates(np.array([[px[0], px[1]]]), H)
+            return np.asarray(self.board_handler.getPixelBoardNorm(cc.tolist()), float).reshape(-1)[:2]
+
+        try:
+            b0 = fwd(base)
+            if not np.all(np.isfinite(b0)):
+                return None
+            eps = 1.0
+            jx = (fwd(base + np.array([eps, 0.0])) - b0) / eps
+            jy = (fwd(base + np.array([0.0, eps])) - b0) / eps
+            J = np.column_stack([jx, jy])
+            Dwh = np.diag([1280.0, 720.0])              # norm-image -> desnorm pixel
+            cov_px = Dwh @ np.asarray(cov_img, float) @ Dwh
+            nb = J @ cov_px @ J.T
+            if not np.all(np.isfinite(nb)):
+                return None
+            return [[float(nb[0, 0]), float(nb[0, 1])], [float(nb[1, 0]), float(nb[1, 1])]]
+        except Exception:
+            return None
+
+    def recordGazeSample(self, capture_idx, color, shape, slot, board_coord, corrected_coord, phase,
+                         cov_img=None, desnorm_coord=None):
         if 'sequence' not in self.board_metrics_now:
             self.board_metrics_now['sequence'] = []
         if phase == 'pre_start' and 'early_init_capture' not in self.board_metrics_now:
@@ -934,13 +1259,19 @@ class StateMachine:
         # board pose is solved: store a null normalized coord rather than dropping the sample
         norm_board_coord = (self.board_handler.getPixelBoardNorm(corrected_coord.tolist()).tolist()
                             if corrected_coord is not None else [None, None])
+        # gaze on the detected panel (on_panel) or on a cell covered by a flat-white
+        # surface (blank, the panel cardboard sweeping over it) is NOT a visible-cell
+        # observation, so it gets no board-cell projection (reads 0% board).
+        norm_board_cov = (self._projectGazeCov(desnorm_coord, cov_img)
+                          if (corrected_coord is not None and phase not in ('on_panel', 'blank')) else None)
         self.board_metrics_now['sequence'].append({'color': color,
                                                    'shape': shape,
                                                    'slot': slot,
                                                    'frame': capture_idx,
                                                    'phase': phase,
                                                    'board_coord': list(board_coord),
-                                                   'norm_board_coord': norm_board_coord})
+                                                   'norm_board_coord': norm_board_coord,
+                                                   'norm_board_cov': norm_board_cov})
 
     """
         Gaze during the panel removal window: the board pose may be known (arucos +
@@ -958,7 +1289,8 @@ class StateMachine:
             return
         panel_polygon = self.panel_handler.getPanelPolygon()
 
-        for coordinates in desnormalized_coord_list:
+        for index, coordinates in enumerate(desnormalized_coord_list):
+            cov_img = self.gaze_cov_list[index] if index < len(self.gaze_cov_list) else None
             und_coord = self.distortion_handler.correctCoordinates(coordinates, homography=None)[0]
             coord_info = self.board_handler.getPixelInfo([coordinates])
             info = coord_info[0] if coord_info else ('not_board', 'not_board', False, [-1, -1], None)
@@ -966,23 +1298,27 @@ class StateMachine:
 
             if panel_polygon is not None and \
                cv.pointPolygonTest(panel_polygon, (float(und_coord[0]), float(und_coord[1])), False) >= 0:
-                self.recordGazeSample(capture_idx, 'on_panel', 'on_panel', False, [-1, -1], corrected_coord, phase='on_panel')
+                self.recordGazeSample(capture_idx, 'on_panel', 'on_panel', False, [-1, -1], corrected_coord, phase='on_panel',
+                                      cov_img=cov_img, desnorm_coord=coordinates)
                 self.gaze_classification.append((und_coord, 'on_panel'))
                 continue
 
             if color == 'not_board':
-                self.recordGazeSample(capture_idx, 'not_board', 'not_board', False, [-1, -1], corrected_coord, phase='not_board')
+                self.recordGazeSample(capture_idx, 'not_board', 'not_board', False, [-1, -1], corrected_coord, phase='not_board',
+                                      cov_img=cov_img, desnorm_coord=coordinates)
                 self.gaze_classification.append((und_coord, 'not_board'))
                 continue
 
             if self.board_handler.isRegionBlank(corrected_coord):
                 # Flat white where a piece or slot outline should be visible: the panel
                 # (or another blank surface) still covers this cell. Keep the cell id.
-                self.recordGazeSample(capture_idx, color, shape, slot, board_coord, corrected_coord, phase='blank')
+                self.recordGazeSample(capture_idx, color, shape, slot, board_coord, corrected_coord, phase='blank',
+                                      cov_img=cov_img, desnorm_coord=coordinates)
                 self.gaze_classification.append((und_coord, 'blank'))
                 continue
 
-            self.recordGazeSample(capture_idx, color, shape, slot, board_coord, corrected_coord, phase='pre_start')
+            self.recordGazeSample(capture_idx, color, shape, slot, board_coord, corrected_coord, phase='pre_start',
+                                  cov_img=cov_img, desnorm_coord=coordinates)
             self.gaze_classification.append((und_coord, 'pre_start'))
 
     """
@@ -1013,7 +1349,7 @@ class StateMachine:
         swallowed a brief same-panel re-presentation and that trial was lost.
     """
     def test_motor_recovery_state(self, undistorted_image, capture_idx, desnormalized_coord_list):
-        # processPanel applies the same 2-frame confirmation init uses, so the counter
+        # processPanel applies the same 4-frame confirmation init uses, so the counter
         # carries over and init picks the panel up without re-counting from scratch.
         next_panel = self.processPanel(undistorted_image, capture_idx, desnormalized_coord_list)
         if next_panel is not None:
@@ -1027,9 +1363,11 @@ class StateMachine:
         # tagged 'motor' so it joins the sequence CSV (phases motor/withdraw) but does NOT
         # enter the per-colour search counters. The board is occluded by the hand here, so
         # the cell is the board-layout cell under the gaze, not necessarily visible.
-        for coord_data in self.board_handler.getPixelInfo(desnormalized_coord_list):
+        for index, coord_data in enumerate(self.board_handler.getPixelInfo(desnormalized_coord_list)):
             color, shape, slot, board_coord, corrected_coord = coord_data
-            self.recordGazeSample(capture_idx, color, shape, slot, board_coord, corrected_coord, phase='motor')
+            cov_img = self.gaze_cov_list[index] if index < len(self.gaze_cov_list) else None
+            self.recordGazeSample(capture_idx, color, shape, slot, board_coord, corrected_coord, phase='motor',
+                                  cov_img=cov_img, desnorm_coord=desnormalized_coord_list[index])
 
         # Watch the target touch through the motor phase (the hand is over the board now).
         had_touch = 'target_touch_capture' in self.board_metrics_now
@@ -1152,6 +1490,9 @@ class StateMachine:
         self.motor_recovery_exit_frame = None
         self.board_occ_active = False
         self.board_occ_peak = 0.0
+        self.cell_occ_at_peak = None   # per-cell occlusion snapshot at the board_occ peak (touched cell)
+        self.cell_occ_at_peak_frame = None
+        self.cell_touch_score = None   # accumulated per-cell FOCAL occlusion (sustained fingertip)
         self.board_occ_exit_streak = 0
         self.board_occ_exit_start_frame = None
         self.last_board_occ = None
@@ -1206,14 +1547,148 @@ class StateMachine:
         self.frame_data_store = data_store['frames_info']
         self.fixation_data_store = data_store['fixations_info']
         self.board_metrics_store = data_store['trials_data']
+        # state_transitions is written by store_results: restore it so a reload+store
+        # round-trip (e.g. the post-hoc landmark re-processing tool) keeps the timeline.
+        self.state_transitions = data_store.get('state_transitions', self.state_transitions)
+        # Preserve the original execution-mode provenance across a reload+store round-trip.
+        self.slow_analysis = data_store.get('slow_analysis', self.slow_analysis)
 
-    def store_results(self, output_path, participant_id = "", video_fps = None):
+    def _idtFixations(self, pts):
+        """I-DT fixations over gaze samples (each with norm_board_coord, board_coord, frame):
+        maximal runs whose normalized bounding box stays under the dispersion bound and last at
+        least the min-samples. Returns [(start_frame, end_frame, (col,row) predominant cell)].
+        Same detector as target_found; reused for the gaze 'validation' (last fixation before
+        the touch = the piece the eyes committed to)."""
+        disp_max = self.target_found_fixation_dispersion
+        min_n = self.target_found_min_fixation_samples
+        out, i = [], 0
+        while i < len(pts):
+            xs = [pts[i]['norm_board_coord'][0]]
+            ys = [pts[i]['norm_board_coord'][1]]
+            j = i + 1
+            while j < len(pts):
+                x, y = pts[j]['norm_board_coord']
+                if (max(xs + [x]) - min(xs + [x])) + (max(ys + [y]) - min(ys + [y])) > disp_max:
+                    break
+                xs.append(x); ys.append(y); j += 1
+            if (j - i) >= min_n:
+                cells = Counter(tuple(pts[k]['board_coord']) for k in range(i, j)
+                                if pts[k].get('board_coord') and pts[k]['board_coord'][0] is not None)
+                cell = cells.most_common(1)[0][0] if cells else None
+                out.append((pts[i]['frame'], pts[j - 1]['frame'], cell))
+                i = j
+            else:
+                i += 1
+        return out
+
+    def _deriveWrongPiece(self):
+        """Per-trial: the piece the hand TOUCHED, the piece the GAZE validated, and the error
+        type -- stored in the trial metrics BEFORE serialization so the PKL (the source of
+        truth) is complete; the CSVs are just a projection of it.
+          touched  = the target if its touch was confirmed; else the cell with the most
+                     occlusion at the board_occ peak (the press), if above wrong_touch_min_occ.
+          validated= the cell of the last BOARD fixation (I-DT) before the touch / trial end.
+          error    = correct (touched the target) | perceptual (gaze and touch on the SAME
+                     wrong piece) | motor (touched a piece other than the validated/target one)."""
+        # Board layout (cell -> piece), fixed for the session, from all on-board gaze samples.
+        cell_piece = {}
+        for tm in self.board_metrics_store.values():
+            if not isinstance(tm, dict):
+                continue
+            for m in tm.values():
+                if not isinstance(m, dict):
+                    continue
+                for s in m.get('sequence', []):
+                    bc, col = s.get('board_coord'), s.get('color')
+                    if bc and bc[0] is not None and col and col not in ('not_board', 'on_panel'):
+                        cell_piece[(int(bc[0]), int(bc[1]))] = f"{col}_{s.get('shape')}"
+        for key, tm in self.board_metrics_store.items():
+            if key == 'latest':
+                continue
+            for name, m in tm.items():
+                if not isinstance(m, dict) or m.get('init_capture', -1) == -1 \
+                   or name.startswith(('missing', 'transition', 'end_of')):
+                    continue
+                target_cord = m.get('target_cord')
+                target_cell = (int(target_cord[1]), int(target_cord[0])) if (target_cord and target_cord[0] is not None) else None
+                touch = m.get('target_touch_capture')
+                reach = m.get('motor_onset_capture')
+                touched_cell = touched_piece = wrong_touch_frame = None
+                if touch is not None and target_cell is not None:
+                    touched_cell, touched_piece = target_cell, name
+                elif m.get('cell_touch_score') is not None and reach is not None:
+                    # Touched cell = the SUSTAINED-FOCAL maximum: the cell where a fingertip
+                    # rested (focal every frame) rather than where the arm merely swept. Gaze is
+                    # NOT used here, on purpose (its agreement/disagreement is the error signal).
+                    score = np.array(m['cell_touch_score'], dtype=float)
+                    r, c = np.unravel_index(int(score.argmax()), score.shape)
+                    if score[r, c] >= self.wrong_touch_min_score:
+                        touched_cell, touched_piece = (int(c), int(r)), cell_piece.get((int(c), int(r)))
+                        wrong_touch_frame = m.get('cell_occ_peak_frame')
+                # gaze validation: last BOARD fixation (excludes panel / off-board) before the touch
+                board_pts = [s for s in m.get('sequence', [])
+                             if s.get('norm_board_coord') and s['norm_board_coord'][0] is not None
+                             and s.get('color') not in ('not_board', 'on_panel')]
+                boundary = touch if touch is not None else m.get('end_capture')
+                gaze_cell = gaze_piece = frame_validation = None
+                before = [f for f in self._idtFixations(board_pts) if f[0] <= boundary and f[2] is not None]
+                if before:
+                    frame_validation = before[-1][0]
+                    gaze_cell = (int(before[-1][2][0]), int(before[-1][2][1]))
+                    gaze_piece = cell_piece.get(gaze_cell)
+                # error_type from RELIABLE signals only. The touched_cell/piece are kept as
+                # EXPERIMENTAL info (too noisy to trust -- the occlusion cannot yet separate the
+                # fingertip from the arm; see docs) and do NOT drive this. A trial is flagged when
+                # the hand both ENTERED and LEFT the board (a completed reach) but neither the
+                # target was touched NOR the gaze committed to it: something off-target happened
+                # (which piece it was is not yet located -- review it in the debug figure).
+                target_touched = touch is not None
+                reach_done = reach is not None and m.get('hand_exit_capture') is not None
+                gaze_on_target = target_cell is not None and gaze_cell == target_cell
+                if target_touched:
+                    error_type = 'correct'
+                elif reach_done and target_cell is not None and not gaze_on_target:
+                    error_type = 'off_target'       # reached+withdrew, target neither touched nor looked at
+                elif reach_done and gaze_on_target:
+                    error_type = 'no_touch'          # looked at the target, reached, but no touch confirmed
+                else:
+                    error_type = None
+                m['touched_cell'], m['touched_piece'] = touched_cell, touched_piece
+                m['gaze_validated_cell'], m['gaze_validated_piece'] = gaze_cell, gaze_piece
+                m['frame_validation'], m['wrong_touch_frame'] = frame_validation, wrong_touch_frame
+                m['error_type'] = error_type
+
+    def store_results(self, output_path, participant_id = "", video_fps = None, run_config = None):
 
         self.handle_end_of_video()
         self.board_metrics_store.pop('latest', None)
+        # Derive the touched/validated piece + error type INTO the metrics before serialising,
+        # so the PKL is complete (the CSVs below are only a projection of it).
+        self._deriveWrongPiece()
+
+        # Provenance: every output records HOW it was produced, so a result is never silently
+        # mode-dependent and nobody has to reverse-engineer it later. slow_analysis is the
+        # authoritative one; run_config carries the rest of the quality-affecting options.
+        run_config = dict(run_config or {})
+        run_config.setdefault('slow_analysis', self.slow_analysis)
+        partial = bool(run_config.get('start_frame') or run_config.get('end_frame') is not None)
+
+        # Two guards that make a degraded/partial output SCREAM here instead of being
+        # discovered weeks later by comparing versions:
+        n_missing = sum(1 for k, t in self.board_metrics_store.items()
+                        if k != 'latest' and list(t.keys())[0].startswith('missing_trial_error'))
+        n_total = sum(1 for k in self.board_metrics_store if k != 'latest')
+        if partial:
+            log(f"[store_results::{participant_id}] NOTE: PARTIAL run (start_frame={run_config.get('start_frame')}, "
+                f"end_frame={run_config.get('end_frame')}) -- this output is a debug SEGMENT, not the full "
+                f"recording; do not use it as a complete result.")
+        elif n_total and n_missing > max(2, 0.05 * n_total):
+            log(f"[store_results::{participant_id}] WARNING: {n_missing}/{n_total} expected trials were NOT "
+                f"detected (slow_analysis={self.slow_analysis}). A high miss rate often means the fast path "
+                f"subsampled past marginal panels -- re-run with slow_analysis before trusting this output.")
 
         gaze_sampling_rate = getattr(self.eye_data_handler, 'gaze_sampling_rate', None)
-        data_store = {'sw_version': __version__, 'video_fps': video_fps, 'gaze_sampling_rate': gaze_sampling_rate, 'participant_id': participant_id, 'frames_info': self.frame_data_store, 'fixations_info': self.fixation_data_store, 'trials_data': self.board_metrics_store, 'state_transitions': self.state_transitions}
+        data_store = {'sw_version': __version__, 'slow_analysis': self.slow_analysis, 'run_config': run_config, 'video_fps': video_fps, 'gaze_sampling_rate': gaze_sampling_rate, 'participant_id': participant_id, 'frames_info': self.frame_data_store, 'fixations_info': self.fixation_data_store, 'trials_data': self.board_metrics_store, 'state_transitions': self.state_transitions}
         with open(os.path.join(output_path,f'data_{participant_id}.pkl'), 'wb') as f:
             pickle.dump(data_store, f)
         
@@ -1231,11 +1706,12 @@ class StateMachine:
         # are anchored on the homography+occlusion. New per-phase durations and
         # covariates (anticipation, reach distance) are added for the analysis team.
         csv_data.append(['block_index', 'trial_index', 'trial_name', 'Color', 'Shape', 'Piece Fixations', 'Slot only Fixations',
-                         'trial_duration_s', 'early_start_duration_s', 'time_to_target_s', 'search_duration_s', 'reach_duration_s', 'withdraw_duration_s',
-                         'frame_search_start', 'frame_init', 'frame_target_found', 'frame_motor_onset', 'frame_target_touch', 'frame_hand_exit', 'frame_end',
+                         'trial_duration_s', 'time_to_target_s', 'target_found_confidence', 'search_duration_s', 'reach_duration_s', 'withdraw_duration_s',
+                         'frame_search_start', 'frame_init', 'frame_target_found', 'frame_validation', 'frame_motor_onset', 'frame_target_touch', 'frame_hand_exit', 'frame_end',
                          'anticipatory_gaze', 'anticipation_lead_s', 'target_row', 'target_col',
+                         'touched_piece', 'touched_cell', 'gaze_validated_piece', 'gaze_validated_cell', 'error_type',
                          'Finish Status'])
-        csv_data_seq.append(['block_index', 'trial_index', 'trial_name', 'Color', 'Shape', 'Piece=1/Slot=0', 'Phase', 'Frame_N', 'trial_duration_s', 'Board Coord', 'Board norm Coord', 'Finish Status'])
+        csv_data_seq.append(['block_index', 'trial_index', 'trial_name', 'Color', 'Shape', 'Piece=1/Slot=0', 'Phase', 'Frame_N', 'trial_duration_s', 'Board Coord', 'Board norm Coord', 'Cell Dist', 'Onboard Mass', 'Finish Status'])
         # Behavioural marks collected per trial; merged with the state transitions below
         # into ONE chronological timeline (the unified events CSV the analysts asked for).
         mark_events = []
@@ -1265,13 +1741,57 @@ class StateMachine:
             # First gaze on the target cell (when it was first found with the eyes).
             # target_cord is [row,col]; sequence board_coord is [col,row]
             first_target_frame = None
+            target_found_confidence = ''     # graded: mass of the gaze ellipse on the target cell
             target_cord = board_metrics.get('target_cord')
             if target_cord and target_cord[0] is not None:
                 target_colrow = [int(target_cord[1]), int(target_cord[0])]
-                for step in board_metrics.get('sequence', []):
-                    if list(step['board_coord']) == target_colrow:
-                        first_target_frame = step['frame']
-                        break
+                ncols, nrows = self.board_handler.board_size[0], self.board_handler.board_size[1]
+                # I-DT fixation detection: maximal runs of on-board gaze whose
+                # bounding box stays within the dispersion bound; the first such
+                # fixation with a majority of samples on the target marks the frame.
+                pts = [s for s in board_metrics.get('sequence', [])
+                       if s.get('norm_board_coord') and s['norm_board_coord'][0] is not None]
+                disp_max = self.target_found_fixation_dispersion
+                min_n = self.target_found_min_fixation_samples
+                i = 0
+                tf_conf = 0.0
+                while i < len(pts):
+                    xs = [pts[i]['norm_board_coord'][0]]
+                    ys = [pts[i]['norm_board_coord'][1]]
+                    j = i + 1
+                    while j < len(pts):
+                        x, y = pts[j]['norm_board_coord']
+                        if (max(xs + [x]) - min(xs + [x])) + (max(ys + [y]) - min(ys + [y])) > disp_max:
+                            break
+                        xs.append(x); ys.append(y); j += 1
+                    if (j - i) >= min_n:
+                        # mean per-sample ellipse mass on the target cell over this fixation.
+                        # target_found_confidence is the max across the trial's fixations;
+                        # found = the FIRST fixation whose mean mass reaches the threshold
+                        # (uncertainty-aware, not a hard discrete cell vote).
+                        masses = []
+                        for k in range(i, j):
+                            cov = pts[k].get('norm_board_cov')
+                            if cov is not None:
+                                nb = pts[k]['norm_board_coord']
+                                masses.append(_cell_mass(nb[0], nb[1],
+                                                         max(cov[0][0], 1e-9) ** 0.5, max(cov[1][1], 1e-9) ** 0.5,
+                                                         target_colrow[0], target_colrow[1], ncols, nrows))
+                        if masses:
+                            mean_mass = sum(masses) / len(masses)
+                            tf_conf = max(tf_conf, mean_mass)
+                            if mean_mass >= self.target_found_mass_threshold and first_target_frame is None:
+                                first_target_frame = pts[i]['frame']
+                        else:
+                            # no uncertainty model on this fixation: fall back to the discrete majority vote
+                            on = sum(1 for k in range(i, j) if list(pts[k]['board_coord']) == target_colrow)
+                            if on * 2 >= (j - i) and first_target_frame is None:
+                                first_target_frame = pts[i]['frame']
+                        i = j
+                    else:
+                        i += 1
+                if any(s.get('norm_board_cov') for s in pts):
+                    target_found_confidence = round(tf_conf, 3)
             time_to_target_s = '' if first_target_frame is None else max(0, (first_target_frame-search_start)/self.video_fps)
             # Per-phase durations (clean model): search (board gaze until the hand is over
             # the board), reach (hand over board until the touch), withdraw (touch until
@@ -1291,12 +1811,28 @@ class StateMachine:
             if target_cord and target_cord[0] is not None:
                 target_row, target_col = int(target_cord[0]), int(target_cord[1])
 
+            # Touched piece / gaze validation / error type: READ from the metrics (computed in
+            # _deriveWrongPiece before serialisation -- the PKL is the source of truth; this CSV
+            # is a projection). Cells are (col,row) tuples -> "row,col" strings for the CSV.
+            touched_piece = board_metrics.get('touched_piece') or ''
+            gaze_validated_piece = board_metrics.get('gaze_validated_piece') or ''
+            error_type = board_metrics.get('error_type') or ''
+            frame_validation = board_metrics.get('frame_validation')
+            wrong_touch_frame = board_metrics.get('wrong_touch_frame')
+            _tc, _vc = board_metrics.get('touched_cell'), board_metrics.get('gaze_validated_cell')
+            tc = f"{_tc[1]},{_tc[0]}" if _tc else ''
+            vc = f"{_vc[1]},{_vc[0]}" if _vc else ''
+
             # Behavioural marks of this trial as point events, to be interleaved with the
             # state transitions in the unified timeline. Skipped when not observed; the
             # missing_trial_error placeholders (init/end = -1) carry no real frames.
             if end_capture != -1 and init_capture != -1:
+                # NOTE: no 'wrong_touch' mark -- the touched cell is experimental/unreliable, so
+                # publishing it as a timeline event would mislead. The off_target anomaly shows as
+                # validation (where the eyes went) + motor_onset/hand_exit WITHOUT a target_touch.
                 for mark_name, mark_frame in [('search_start', search_start),
                                               ('target_found', first_target_frame),
+                                              ('validation', frame_validation),
                                               ('motor_onset', motor_onset),
                                               ('target_touch', touch),
                                               ('hand_exit', hand_exit),
@@ -1325,12 +1861,15 @@ class StateMachine:
                     return 'withdraw'
                 if reach_onset is not None and frame >= reach_onset:
                     return 'motor'
+                if frame_validation is not None and frame >= frame_validation:
+                    return 'validation'            # gaze committed to a piece, hand not in yet
                 if first_target_frame is not None and frame >= first_target_frame:
                     return 'verification'
                 return 'search'
 
             # Raw event frames (empty string when the event was not observed)
             f_target = first_target_frame if first_target_frame is not None else ''
+            f_valid = frame_validation if frame_validation is not None else ''
             f_motor = motor_onset if motor_onset is not None else ''
             f_touch = touch if touch is not None else ''
             f_exit = hand_exit if hand_exit is not None else ''
@@ -1340,12 +1879,21 @@ class StateMachine:
                     continue
                 for shape, shape_item in color_item.items():
                     csv_data.append([block_id, trial_id, board_test_name, color, shape, shape_item[True], shape_item[False],
-                                     duration_s, anticipation_lead_s, time_to_target_s, search_duration_s, reach_duration_s, withdraw_duration_s,
-                                     search_start, init_capture, f_target, f_motor, f_touch, f_exit, end_capture,
+                                     duration_s, time_to_target_s, target_found_confidence, search_duration_s, reach_duration_s, withdraw_duration_s,
+                                     search_start, init_capture, f_target, f_valid, f_motor, f_touch, f_exit, end_capture,
                                      anticipatory_gaze, anticipation_lead_s, target_row, target_col,
+                                     touched_piece, tc, gaze_validated_piece, vc, error_type,
                                      board_metrics['status']])
 
+            ncols_s, nrows_s = self.board_handler.board_size[0], self.board_handler.board_size[1]
             for step in board_metrics['sequence']:
+                nb = step.get('norm_board_coord')
+                mx = nb[0] if nb and nb[0] is not None else None
+                my = nb[1] if nb and nb[1] is not None else None
+                if step.get('phase') in ('on_panel', 'blank'):
+                    cell_dist, onboard_mass = '', 0.0   # panel / covered cell -> not a visible-cell observation
+                else:
+                    cell_dist, onboard_mass = _cell_distribution(mx, my, step.get('norm_board_cov'), ncols_s, nrows_s)
                 csv_data_seq.append([
                     block_id,
                     trial_id,
@@ -1358,6 +1906,8 @@ class StateMachine:
                     duration_s,
                     step['board_coord'],
                     step['norm_board_coord'],
+                    cell_dist,
+                    onboard_mass,
                     board_metrics['status']
                 ])
 

@@ -1,4 +1,3 @@
-
 #!/usr/bin/env python3
 # encoding: utf-8
 
@@ -68,6 +67,7 @@ class BoardHandler:
         self.warp_width = None
         self.warp_height = None
         self.contour_detected_raw = False
+        self.border_thr_ema = None           # temporally smoothed black-border threshold (EMA)
 
         self.display_detected_board_contour = True      # Display detected contour of the board
         self.display_configuration_board_matrix = True  # Display matrix from configuration
@@ -136,6 +136,18 @@ class BoardHandler:
         self.board_occ_ref = None
         self.board_occ_size = (64, 36)
         self.board_occ_diff_threshold = 35  # per-pixel grayscale change to count
+        # Last whole-board change mask + its crop, kept so the per-cell occlusion map
+        # (wrong-piece detection) can be derived from it for FREE (no per-cell patch/SSIM).
+        self._board_occ_changed = None
+        self._board_occ_crop = None
+        # Debug-only capture of the target-cell touch masks (patch/ref/diff/edge/ssim/changed)
+        # for the documentation figure. Off by default -> zero cost in normal runs.
+        self._dbg_masks_on = False
+        self._dbg_masks = None
+        # Debug-only capture of the WHOLE-BOARD occlusion masks (patch/ref/diff/changed) -- the
+        # board_occ equivalent of the target masks, for the documentation figure. Off by default.
+        self._dbg_board_masks_on = False
+        self._dbg_board_masks = None
 
         ## Sample-panel mask in warped-board coordinates (v1.2.0). The panel is a KNOWN
         # occluder while it is being removed (not the hand), so it is excluded from the
@@ -374,7 +386,9 @@ class BoardHandler:
         return coord_info_list
 
     def getShapeCellIndex(self, shape, color, piece=True):
-        # print(f"Get Cell Index for {shape = }, {color = }, {piece = }")
+        # NOTE: returns [row, col] (i, j) -- the OPPOSITE order to getCellIndex, which returns
+        # (col, row). board_data_dict is keyed by (col, row). Callers must convert accordingly
+        # (e.g. store_results builds target_colrow = [target_cord[1], target_cord[0]]).
         if self.cell_matrix is None:
             return None, None
         for i in range(self.cell_matrix.shape[0]):
@@ -526,8 +540,8 @@ class BoardHandler:
         hsv_image = cv.cvtColor(image, cv.COLOR_BGR2HSV_FULL)
         hue, sat, intensity = cv.split(hsv_image)
 
-        # Image is already compensated, get color infomration from board margins in the image
-        # instead of harcoding them:
+        # Black-border threshold sampled from the live board margins (adaptive to lighting,
+        # per frame -- no stale/circular dependency on a clean template).
         height, width, _ = image.shape
         pixel_distance = 13
         reference_edges = np.concatenate([
@@ -551,17 +565,27 @@ class BoardHandler:
 
         #     cv.imshow(f'reference_edges', image_reference_edges)
 
-        mean_h, mean_s, mean_v = np.mean(reference_edges, axis=0)
-        std_h, std_s, std_v = np.std(reference_edges, axis=0)
-        # Lower bounds clamp at 0 (max, not min: with min they were always 0 and the
-        # mask accepted any dark pixel, e.g. black clothing entering the view)
-        s_margins = [max(0, mean_s-4*std_s), min(255, mean_s+4*std_s)]
-        v_margins = [max(0, mean_v-4*std_v), min(255, mean_v+4*std_v)]
-
-        # mean_h/std_h come from the HSV_FULL channel (0-255) but getMaskHue expects
-        # degrees (0-360), convert before passing
-        h_ref_deg = mean_h * 360.0 / 255.0
-        h_eps_deg = 4 * std_h * 360.0 / 255.0
+        # ROBUST center (median) + TEMPORALLY STABLE spread/threshold. Two failure modes are
+        # addressed: (1) spatially, a hand entering through a margin is a MINORITY of the
+        # 4-edge perimeter -> the median ignores it (mean drifted and flooded the mask, 008
+        # f2184); (2) temporally, the border is the SAME frame to frame, so recomputing the
+        # threshold fresh each frame jittered the mask -> an EMA across frames stabilises it.
+        # Width uses 6*MAD (~4*std for a normal) so it is NOT tighter than the old 4*std
+        # (4*MAD was ~2.7*std -> too strict, more flicker, fewer starts -- measured).
+        med = np.median(reference_edges, axis=0)
+        mad = np.median(np.abs(reference_edges - med), axis=0) * 1.4826  # ~std for a normal
+        # threshold bounds this frame: [h_ref_deg, h_eps_deg, s_lo, s_hi, v_lo, v_hi]
+        thr_now = np.array([
+            med[0] * 360.0 / 255.0, 6*mad[0] * 360.0 / 255.0,
+            max(0, med[1]-6*mad[1]), min(255, med[1]+6*mad[1]),
+            max(0, med[2]-6*mad[2]), min(255, med[2]+6*mad[2])])
+        if self.border_thr_ema is None:
+            self.border_thr_ema = thr_now
+        else:
+            self.border_thr_ema = 0.85 * self.border_thr_ema + 0.15 * thr_now
+        h_ref_deg, h_eps_deg, s_lo, s_hi, v_lo, v_hi = self.border_thr_ema
+        s_margins = [s_lo, s_hi]
+        v_margins = [v_lo, v_hi]
         res = getMaskHue(hue, sat, intensity, h_ref=h_ref_deg, h_epsilon=h_eps_deg, s_margins=s_margins, v_margins = v_margins)
         # Exclude the sample panel (known occluder while it is being removed): its white
         # back would otherwise be taken as board border and break the rectangle, or
@@ -570,19 +594,22 @@ class BoardHandler:
             res[ignore_mask > 0] = 0
         # cv.imshow(f'border_mask', res)
 
-        edge_image = cv.Canny(res, threshold1=50, threshold2=200)
-        contours, hierarchy = cv.findContours(edge_image, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE)
-        
+        # PRIMARY board contour: external rectangle taken DIRECTLY on the colour mask
+        # (no Canny). Canny double-edged the thick band and fragmented the contour
+        # (measured: 12/81 detections vs 43/81 without, on a peeling-piece border). NO
+        # morphological close here: a close bridges the narrow gap a hand opens and would
+        # blind the cut (motor onset = loss of this contour); the close is only for the
+        # separate start-gate signal below.
+        contours, hierarchy = cv.findContours(res, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE)
+
         board_contour = None
-        # cv.imshow(f'border_edges', edge_image)
         for contour in contours:
             shape, approx = checkShape(contour, area_filter=[700000, math.inf])
             if shape == 'rectangle':
                 board_contour = approx
                 area = cv.contourArea(contour)
                 break
- 
-        # cv.imshow(f'border_edges', edge_image)
+
         # cv.imshow(f'border_contour', display_image)
         return board_contour
     
@@ -656,11 +683,54 @@ class BoardHandler:
         # vs blue 87%). For those we de-weight GATE 1 and rely on the brightness/texture
         # change (GATE 2) + the control separation. Cool targets keep GATE 1 (it works).
         self.touch_warm_target = str(target_color) in ('red', 'yellow')
-        self.target_cell = (int(target_cell[0]), int(target_cell[1]))
+        tr, tc = int(target_cell[0]), int(target_cell[1])      # (row, col)
+        self.target_cell = (tr, tc)
         rows, cols = self.board_size[1], self.board_size[0]
-        candidates = [(0, 0), (0, cols-1), (rows-1, 0), (rows-1, cols-1), (rows//2, cols//2)]
-        candidates.sort(key=lambda c: -(abs(c[0]-self.target_cell[0]) + abs(c[1]-self.target_cell[1])))
-        self.control_cells = candidates[:3]
+        bd = self.board_data_dict
+        def color_of(r, c):                                    # board_data_dict keyed (col,row)
+            v = bd.get((c, r)) if bd else None
+            return str(v[0]) if v else None
+        tgt_color = str(target_color) if target_color is not None else color_of(tr, tc)
+        def has_piece(r, c):                                   # 3rd field True = piece, False = empty slot
+            v = bd.get((c, r)) if bd else None
+            return bool(v[2]) if (v and len(v) > 2) else False
+        # The arm reaches from the NEAR edge (bottom = max row index) toward the target, so cells
+        # NEARER the participant than the target and ~in its column lie in the forearm's path: the
+        # arm inflates their change and falsely cancels the (low-contrast, warm) target separation
+        # (`control_ge`). Controls are scored to be: (1) SAME colour as the target, so the occlusion
+        # sensitivity matches (a warm hand changes a warm control as little as the warm target,
+        # instead of a high-contrast control over-registering it); (2) cells WITH A PIECE, never an
+        # empty slot (a slot's white inner area over-registers any hand); (3) OUTSIDE the arm
+        # corridor; (4) far from the target and spread, for a fair global-variation estimate. Falls
+        # back to the geometric farthest cells (legacy) if too few same-colour cells qualify.
+        def in_corridor(r, c):
+            return r >= tr and abs(c - tc) <= 1
+        same = [(r, c) for r in range(rows) for c in range(cols)
+                if (r, c) != (tr, tc) and color_of(r, c) == tgt_color
+                and (abs(r - tr) + abs(c - tc)) >= 2]
+        if len(same) >= 3:
+            def score(cell):
+                r, c = cell
+                return ((2 if has_piece(r, c) else 0)          # piece >> slot (slot = white over-registers)
+                        + (1 if not in_corridor(r, c) else 0), # outside the arm corridor
+                        abs(r - tr) + abs(c - tc))             # then far from the target
+            pool = sorted(same, key=score, reverse=True)
+        else:
+            legacy = [(0, 0), (0, cols-1), (rows-1, 0), (rows-1, cols-1), (rows//2, cols//2)]
+            legacy.sort(key=lambda c: -(abs(c[0]-tr) + abs(c[1]-tc)))
+            pool = same + [c for c in legacy if c not in same]
+        chosen = []
+        for cell in pool:                                      # keep the priority order, add spread
+            if len(chosen) >= 3:
+                break
+            if all(abs(cell[0]-ch[0]) + abs(cell[1]-ch[1]) >= 2 for ch in chosen):
+                chosen.append(cell)
+        for cell in pool:                                      # top up if the spread filter left < 3
+            if len(chosen) >= 3:
+                break
+            if cell not in chosen:
+                chosen.append(cell)
+        self.control_cells = chosen[:3]
 
     def clearTargetTracking(self):
         self.target_cell = None
@@ -702,14 +772,57 @@ class BoardHandler:
         if self.panel_mask_warp is not None:
             pm = cv.resize(self.panel_mask_warp[y0:y1, x0:x1], self.board_occ_size,
                            interpolation=cv.INTER_NEAREST) > 0
+            changed = changed & ~pm        # the panel never counts as occlusion (also per-cell)
             valid = ~pm
             frac = float(changed[valid].mean()) if valid.any() else 0.0
         else:
             frac = float(changed.mean())
-        # Absorb slow lighting drift only while the scene is calm (never while occluded)
+        # Keep the mask + crop so getCellOcclusionMap can reuse it (no extra work this frame).
+        self._board_occ_changed = changed
+        self._board_occ_crop = (x0, y0, x1 - x0, y1 - y0)
+        # Debug: keep the whole-board intermediate masks (current board, clean reference, abs diff,
+        # final change mask) so the documentation figure can show what the board_occ measure sees.
+        if self._dbg_board_masks_on:
+            self._dbg_board_masks = {'patch': np.clip(small, 0, 255).astype(np.uint8),
+                                     'ref': np.clip(self.board_occ_ref, 0, 255).astype(np.uint8),
+                                     'diff': np.abs(gray - self.board_occ_ref),
+                                     'changed': changed.copy()}
+        # Absorb slow lighting drift only while the scene is calm (never while occluded).
+        # Do NOT let the sample panel leak into the reference: keep the pre-panel value on
+        # panel pixels, otherwise the reference absorbs the panel and marks false change when
+        # it is removed.
         if frac < 0.03:
-            self.board_occ_ref = 0.9 * self.board_occ_ref + 0.1 * gray
+            updated = 0.9 * self.board_occ_ref + 0.1 * gray
+            if self.panel_mask_warp is not None:
+                updated[pm] = self.board_occ_ref[pm]
+            self.board_occ_ref = updated
         return frac
+
+    def getCellOcclusionMap(self):
+        """Per-cell hand occlusion, REUSING the whole-board change mask (board_occ): for each
+        board cell, the fraction of changed pixels in its region of the 64x36 mask. Cheap (no
+        per-cell patch / phaseCorrelate / SSIM -- that gauntlet is only for confirming the
+        TARGET touch). Lets us find which piece the hand is actually over when the target is not
+        the one being touched (wrong-piece detection). Returns a (rows x cols) array, or None."""
+        changed, crop = self._board_occ_changed, self._board_occ_crop
+        if changed is None or crop is None or self.cell_matrix is None:
+            return None
+        gh, gw = changed.shape
+        x0, y0, bw, bh = crop
+        if bw <= 0 or bh <= 0:
+            return None
+        rows, cols = self.cell_matrix.shape[0], self.cell_matrix.shape[1]
+        hw = max(1, int(self.cell_width / bw * gw / 2.0))
+        hh = max(1, int(self.cell_height / bh * gh / 2.0))
+        occ = np.zeros((rows, cols), np.float32)
+        for i in range(rows):
+            for j in range(cols):
+                cx, cy = self.cell_matrix[i][j]
+                sx = int((cx - x0) / bw * gw)
+                sy = int((cy - y0) / bh * gh)
+                patch = changed[max(0, sy - hh):sy + hh + 1, max(0, sx - hw):sx + hw + 1]
+                occ[i, j] = float(patch.mean()) if patch.size else 0.0
+        return occ
 
     def _cellRoi(self, cell):
         row, col = cell
@@ -818,16 +931,25 @@ class BoardHandler:
                 pat_gray_a = cv.cvtColor(np.clip(patch, 0, 255).astype(np.uint8), cv.COLOR_BGR2GRAY).astype(np.float32)
                 pgrad = cv.magnitude(cv.Sobel(pat_gray_a, cv.CV_32F, 1, 0, ksize=3), cv.Sobel(pat_gray_a, cv.CV_32F, 0, 1, ksize=3))
                 rgrad = cv.magnitude(cv.Sobel(ref_gray, cv.CV_32F, 1, 0, ksize=3), cv.Sobel(ref_gray, cv.CV_32F, 0, 1, ksize=3))
-                changed = changed | ((pgrad - rgrad) > self.occlusion_edge_threshold)
+                edge = pgrad - rgrad
+                changed = changed | (edge > self.occlusion_edge_threshold)
                 # SSIM structural change: a hand breaks the piece's structure -> low SSIM,
                 # robust to noise/lighting and INDEPENDENT of colour (catches warm hands on
                 # warm pieces, where pixel/edge change is small). Low-SSIM pixels = changed.
+                smap = None
                 try:
                     _, smap = _ssim(ref_gray.astype(np.uint8), pat_gray_a.astype(np.uint8),
                                     full=True, data_range=255)
                     changed = changed | (smap < self.occlusion_ssim_threshold)
                 except Exception:
                     pass
+                # Debug: keep the intermediate target-cell masks (gated, no cost in normal runs)
+                # so a documentation figure can show what the touch detector actually sees.
+                if self._dbg_masks_on:
+                    self._dbg_masks = {'patch': np.clip(patch, 0, 255).astype(np.uint8),
+                                       'ref': np.clip(reference, 0, 255).astype(np.uint8),
+                                       'diff': diff, 'edge': edge, 'ssim': smap,
+                                       'changed': changed.copy()}
             # Change measured separately on the white (gutters) and the colored (piece)
             # pixels of the cell, then averaged. A finger reaching the target covers the
             # colored piece reliably but the white gutters only sometimes; requiring BOTH

@@ -1,0 +1,7 @@
+{
+  "markdown-pdf.styles": ["docs/pdf_style.css"],
+  "markdown-pdf.format": "A4",
+  "markdown.extension.toc.levels": "2..6",
+  "markdown.extension.toc.slugifyMode": "github",
+  "markdown.extension.toc.updateOnSave": true
+}

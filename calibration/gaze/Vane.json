@@ -1,0 +1,124 @@
+{
+  "participant": "Vane",
+  "apply": true,
+  "calib_segment_times": [
+    -2.34
+  ],
+  "panel_offsets": [
+    {
+      "t": 7.04,
+      "off_x": 0.004763,
+      "off_y": 0.000935,
+      "seg": 0,
+      "n_dots": 9
+    },
+    {
+      "t": 144.816,
+      "off_x": -0.004248,
+      "off_y": -0.030688,
+      "seg": 0,
+      "n_dots": 9
+    },
+    {
+      "t": 241.108,
+      "off_x": -0.003131,
+      "off_y": -0.039159,
+      "seg": 0,
+      "n_dots": 9
+    },
+    {
+      "t": 332.623,
+      "off_x": -0.006172,
+      "off_y": -0.037261,
+      "seg": 0,
+      "n_dots": 9
+    },
+    {
+      "t": 381.146,
+      "off_x": -0.00669,
+      "off_y": -0.038718,
+      "seg": 0,
+      "n_dots": 9
+    },
+    {
+      "t": 479.199,
+      "off_x": -0.00935,
+      "off_y": -0.046218,
+      "seg": 0,
+      "n_dots": 3
+    },
+    {
+      "t": 508.111,
+      "off_x": -0.005405,
+      "off_y": -0.046394,
+      "seg": 0,
+      "n_dots": 9
+    },
+    {
+      "t": 601.387,
+      "off_x": -0.002839,
+      "off_y": -0.029198,
+      "seg": 0,
+      "n_dots": 9
+    }
+  ],
+  "stats": {
+    "base_px": 31.44,
+    "corr_px": 13.21,
+    "gain": 0.58,
+    "gain_lo": 0.462,
+    "gain_hi": 0.652,
+    "n_points": 66
+  },
+  "uncertainty": {
+    "jitter_cov_px": {
+      "sigma_major": 9.43,
+      "sigma_minor": 8.84,
+      "angle_deg": 64.0
+    },
+    "conf_var_factor": {
+      "conf": [
+        0.675,
+        0.8,
+        0.89,
+        0.955,
+        0.995
+      ],
+      "factor": [
+        0.922,
+        0.922,
+        0.922,
+        0.71,
+        0.71
+      ]
+    },
+    "spatial_var_factor": {
+      "model": "radial_ecc_px",
+      "ecc": [
+        109.6,
+        239.2,
+        345.4
+      ],
+      "factor": [
+        1.17,
+        1.203,
+        0.613
+      ]
+    },
+    "jitter_rms_px": 12.92,
+    "n_samples": 9676,
+    "units": "image px (1280x720); Sigma_meas = jitter_cov * conf_var_factor(conf) * spatial_var_factor(ecc)",
+    "bias_cov_px": [
+      [
+        285.561400767108,
+        20.587460478053735
+      ],
+      [
+        20.587460478053735,
+        159.68431913581676
+      ]
+    ]
+  },
+  "fingerprint": "44095fb34483",
+  "units": "normalized image coords, origin top-left; subtract off from [x, 1-y]"
+}

@@ -163,7 +163,59 @@ def process_dir(dir_name):
             return participant_id, trials_present
     return None
 
+def check_config_sanity():
+    """Capa de seguridad (estática): revisa las configs de excepción por participante frente al
+    default y avisa del patrón peligroso -- un trial REAL (trial_id>=0 en el default) convertido
+    en un [-1] a descartar en la excepción, que silenciosamente PIERDE ese trial. Es la clase de
+    error de 001 (red_hexagon t4 -> -1) y de 035/055 (yellow_circle t0 -> -1). Distingue el `-1`
+    legítimo de re-presentación (Vane/064: añaden un -1 SIN quitar el trial real) del erróneo."""
+    exc_dir = os.path.join(REPO_ROOT, 'cfg', 'trials_config_exceptions')
+    if not os.path.isdir(exc_dir):
+        return
+    default = {b[0]: b[1] for b in parseYaml(trials_config_path)['test_block_list']}
+    print("\n=== CONFIG SAFETY: excepciones de trials vs default ===")
+    n_susp = 0
+    for fname in sorted(os.listdir(exc_dir)):
+        if not fname.endswith('_trials_config.yaml'):
+            continue
+        pid = fname.replace('_trials_config.yaml', '')
+        path = os.path.join(exc_dir, fname)
+        exc = {b[0]: b[1] for b in parseYaml(path)['test_block_list']}
+        # ¿hay comentario EXPLICATIVO (más allá del boilerplate)? Un -1 que descarta un trial
+        # real es legítimo si está documentado (035/055: el participante no entendió la tarea)
+        # y SOSPECHOSO si es mudo (001 lo era). parseYaml quita comentarios, así que se lee crudo.
+        boiler = ('All 6 blocks', 'Includes [block_id')
+        documented = any(l.strip().startswith('#') and not any(b in l for b in boiler)
+                         for l in open(path).read().splitlines())
+        flags = []
+        for blk in sorted(set(default) | set(exc)):
+            d, e = default.get(blk, []), exc.get(blk, [])
+            if d == e:
+                continue
+            d_real = {n for t, n in d if t >= 0}
+            e_real = {n for t, n in e if t >= 0}
+            e_minus1 = {n for t, n in e if t == -1}
+            # trial real del default que en la excepción ya NO es real y aparece como -1
+            suspicious = sorted((d_real - e_real) & e_minus1)
+            if suspicious:
+                flags.append((blk, suspicious))
+        if flags:
+            mudo = not documented
+            if mudo:
+                n_susp += 1
+            tag = f"{RED}SIN COMENTARIO -> SOSPECHOSO{RESET}" if mudo else "documentado (exclusión deliberada, OK)"
+            print(f"  [{pid}] {tag}")
+            for blk, susp in flags:
+                print(f"     bloque {blk}: trial REAL -> -1 {susp}")
+        elif exc == default:
+            print(f"  [{pid}] idéntico al default (excepción innecesaria; se puede borrar)")
+    if not n_susp:
+        print("  OK: ningún -1 que descarte un trial real está sin documentar")
+    print()
+
+
 def main():
+    check_config_sanity()
     participants_data = {}
     with ProcessPoolExecutor(max_workers=6) as executor:  # Ajusta el número de workers según tu CPU
         futures = []
