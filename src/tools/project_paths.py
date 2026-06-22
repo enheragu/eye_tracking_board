@@ -59,9 +59,22 @@ def process_trials(data, dir_name, bg_img, img_width, img_height):
             print(f"\t· Processing test [{block_index}][{trial_data['trial_id']}]: {target_name}")
             plot_data(block_index, trial_data, target_name, dir_name, bg_img, img_width, img_height)
 
+# Bounding box [x0, y0, x1, y1] of the painted 8x5 cell grid within the canonical board image
+# (docs/media/TableroSinBordes.png), as fractions of the image. The processing normalises gaze
+# to THIS region (BoardHandler.getPixelBoardNorm over the colored cells), so the plot must map
+# norm [0,1] here. Mapping to the whole image (white margin + black frame included) placed points
+# off-cell -- the target cell-centre landed ~0.3 cell high. Measured on the un-attenuated asset
+# by the saturated-colour bbox; the asset is fixed, hence a constant.
+CANON_COLORED_FRAC = [0.0348, 0.0540, 0.9645, 0.9449]
+
+
 def denormalize_coordinates(norm_coords, img_width, img_height):
-    """Convierte coordenadas normalizadas a píxeles en la imagen"""
-    return [(x * img_width, y * img_height) for x, y in norm_coords]
+    """Convierte coordenadas normalizadas a píxeles, mapeadas sobre la zona de celdas pintadas
+    (CANON_COLORED_FRAC), la MISMA a la que el procesamiento normaliza (getPixelBoardNorm)."""
+    x0, y0, x1, y1 = CANON_COLORED_FRAC
+    px0, py0 = x0 * img_width, y0 * img_height
+    sw, sh = (x1 - x0) * img_width, (y1 - y0) * img_height
+    return [(px0 + x * sw, py0 + y * sh) for x, y in norm_coords]
 
 def plot_data(block_index, trial_data, target_name, dir_name, bg_img, img_width, img_height):
     """Genera el gráfico con gradiente de color sobre la imagen de fondo"""

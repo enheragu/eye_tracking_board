@@ -3,6 +3,20 @@
 
 board_size: [8,5]
 board_size_mm: [312,195]
+
+# Bounding box of the 8x5 CELL grid INSIDE the ArUco-rectified (warped) board view, as fractions
+# [x0, y0, x1, y1] of the warp frame. The ArUco warp already positions the board (board_3d -> the
+# whole warp image) metrically, so the grid is just a fixed sub-rectangle of it -- constant for
+# every frame/participant. This box is the INNER EDGE OF THE BLACK FRAME (= the cell grid: each
+# cell is a coloured square PLUS its white margin on all four sides; the boundary runs through the
+# middle of the white gutters). Measured by scanning outward from the coloured cells to the
+# white/black boundary, on the 22-participant cohort (per-edge std ~0.002-0.012). It is NOT the
+# coloured-pixel bbox: anchoring to the colour ate the white margins and drifted the inner cell
+# boundaries (the bug fixed here). board_3d is a touch larger than the cell grid (a thin black-frame
+# strip shows at the warp edges -- kept visible on purpose for detectContour's "board clean" signal),
+# hence this box is ~[0.03..0.97], not [0,0,1,1].
+colored_grid_frac: [0.027, 0.038, 0.974, 0.960]
+
 board_config:
   '0,0': ['yellow', 'square', False]
   '1,0': ['green', 'hexagon', False]

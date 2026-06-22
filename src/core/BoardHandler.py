@@ -2,7 +2,6 @@
 # encoding: utf-8
 
 import math
-from collections import deque
 
 import cv2 as cv
 import numpy as np
@@ -88,13 +87,12 @@ class BoardHandler:
         self.board_contour_inertia_step = 2
         self.board_contour_intertia_counter = 0
 
-        ## Session reference of the board position inside the warped view. The warp
-        # is built from the aruco layout, so the border rectangle lands in the same
-        # warp coordinates the whole session: the median of past detections allows
-        # assigning gaze to cells when the homography is valid but the full border
-        # is not detectable (panel removal window, partial occlusions)
-        self.reference_rect_history = deque(maxlen=25)
-        self.reference_board_rect = None
+        ## The grid is projected deterministically from the ArUco homography (see step()):
+        # the warp rectifies the board to a fixed metric frame, so the painted cells land in
+        # constant warp coordinates the whole session, and the grid is available whenever the
+        # homography is (it no longer needs the full border to be detected -- helping cell
+        # assignment during the panel-removal window and partial occlusions). grid_from_reference
+        # is kept only as a diagnostic flag (True = grid placed this frame).
         self.grid_from_reference = False
 
         ## Target area occlusion tracking (trial end detection). Temporal change
@@ -192,26 +190,27 @@ class BoardHandler:
         self.cell_matrix, self.cell_width, self.cell_height = None, None, None
         self.grid_from_reference = False
 
-        # Accumulate the detected border rectangle to build a stable session grid
-        if self.board_contour is not None and len(self.board_contour) != 0 and self.contour_detected_raw:
-            self.reference_rect_history.append(cv.boundingRect(self.board_contour))
-            self.reference_board_rect = tuple(np.median(np.array(self.reference_rect_history), axis=0))
-
-        # The grid is taken from the MEDIAN border rectangle, not the per-frame one.
-        # In the warped view the homography already aligns the board every frame, so
-        # the detected contour only jitters by detection noise; the median is the true
-        # stable position with no lag. This keeps the grid steady (no flicker) AND
-        # keeps the touch-detector ROI aligned with the board content (a per-frame grid
-        # made the ROI drift over the board and faked occlusions). The per-frame
-        # contour is only used at the very start, before enough history is gathered.
-        if self.reference_board_rect is not None and len(self.reference_rect_history) >= 5 and self.homography is not None:
-            x, y, w, h = self.reference_board_rect
+        # GRID PLACEMENT (v1.4.1): the 8x5 grid is projected DETERMINISTICALLY from the ArUco
+        # homography, not anchored to the detected black-frame rectangle. The warp rectifies
+        # the board to a fixed metric frame (board_3d -> the whole warp image), so the painted
+        # cells land at a CONSTANT bounding box in warp coordinates for every frame/participant
+        # (colored_grid_frac, calibrated; per-edge std ~0.01 of the frame across 9 participants).
+        # The old approach divided the detected border boundingRect evenly, but that rect is the
+        # OUTER edge of the black frame while the cells sit at the INNER edge -> ~0.25-cell drift
+        # at the board edges (worst since v1.4.0 dropped Canny, which had caught the inner edge by
+        # accident). Placing the grid from the homography removes the drift, needs no per-frame
+        # frame detection (works through partial occlusion) and -- crucially -- the grid and the
+        # gaze share the SAME warp, so ArUco jitter moves both together and cancels in the cell
+        # assignment. This also fixes getPixelBoardNorm and the board_occ crop, which read the
+        # board_origin/board_width/board_height set here. The detected board_contour is still
+        # used as the "board clean & fully visible" signal (contour_detected_raw), not for the grid.
+        if self.homography is not None and self.colored_grid_frac is not None:
+            fx0, fy0, fx1, fy1 = self.colored_grid_frac
+            x, y = fx0 * self.warp_width, fy0 * self.warp_height
+            w, h = (fx1 - fx0) * self.warp_width, (fy1 - fy0) * self.warp_height
             self.cell_matrix, self.cell_width, self.cell_height = self.computeBoardMatrixFromRect(x, y, w, h, self.board_size)
             self.board_data_dict = self.completeBoardConfig(self.cell_matrix, self.cell_width, self.cell_height, self.board_data_dict)
-            self.grid_from_reference = self.board_contour is None
-        elif self.board_contour is not None and len(self.board_contour) != 0:
-            self.cell_matrix, self.cell_width, self.cell_height = self.computeBoardMatrixFromContour(self.board_contour, self.board_size)
-            self.board_data_dict = self.completeBoardConfig(self.cell_matrix, self.cell_width, self.cell_height, self.board_data_dict)
+            self.grid_from_reference = True
 
         self.refreshSessionTemplate()
 
@@ -415,8 +414,13 @@ class BoardHandler:
         with open(game_configuration) as file:
             data = yaml.load(file, Loader=SafeLoader)
             board_data_dict_upright = {tuple(map(int, key.split(','))): value for key, value in data['board_config'].items()}
-            board_size = data['board_size']      
+            board_size = data['board_size']
             board_size_mm = data['board_size_mm']
+
+            # Fractions [x0, y0, x1, y1] of the warp frame occupied by the painted cell grid
+            # (see game_config.yaml). Falls back to the calibrated default if absent so old
+            # configs keep working. Used by step() to place the grid from the ArUco homography.
+            self.colored_grid_frac = data.get('colored_grid_frac', [0.027, 0.038, 0.974, 0.960])
 
             margin = 10 # in mm, same dimension as board_size
             self.board_corners_3d = np.array([[
@@ -439,10 +443,6 @@ class BoardHandler:
         board_data_dict_rotated = {rotate_coordinates_180(key, board_size): value for key, value in board_data_dict_upright.items()}
 
         return board_size, board_size_mm, board_data_dict_upright, board_data_dict_rotated
-    
-    def computeBoardMatrixFromContour(self, board_contour, board_size):
-        x, y, w, h = cv.boundingRect(board_contour)
-        return self.computeBoardMatrixFromRect(x, y, w, h, board_size)
 
     def computeBoardMatrixFromRect(self, x, y, w, h, board_size):
         # Float cell sizes: integer division accumulated a remainder of up to
@@ -602,9 +602,16 @@ class BoardHandler:
         # separate start-gate signal below.
         contours, hierarchy = cv.findContours(res, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE)
 
+        # Minimum board-rectangle area RELATIVE to the warp area (~0.45 of it): the board
+        # frame fills ~0.85 of the warp, a partial/half rectangle ~0.4, so 0.45 accepts the
+        # full board and rejects noise/partials. Relative (not the old absolute 700000 px)
+        # so it stays correct now that the warp keeps the board aspect (v1.4.1) -- the warp
+        # is no longer the full 1280x720 frame, against which 700000 had become near-strict.
+        min_area = 0.45 * image.shape[0] * image.shape[1]
+
         board_contour = None
         for contour in contours:
-            shape, approx = checkShape(contour, area_filter=[700000, math.inf])
+            shape, approx = checkShape(contour, area_filter=[min_area, math.inf])
             if shape == 'rectangle':
                 board_contour = approx
                 area = cv.contourArea(contour)

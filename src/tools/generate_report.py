@@ -32,6 +32,16 @@ import numpy as np
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, REPO_ROOT)
 
+from src.core.StateMachineHandler import _cell_mass, TARGET_FOUND_MASS_THR_DEFAULT
+
+# The 'objetivo visto' criterion mirrors the writer EXACTLY: the SAME bivariate cell-mass
+# (_cell_mass, imported -- not a marginal re-implementation) and the SAME threshold, resolved from
+# the SAME env override AND the SAME default constant as StateMachine (TARGET_FOUND_MASS_THR_DEFAULT,
+# imported -- so the report and the writer can never silently diverge). Earlier this file
+# re-implemented the mass as an independent-axes product AND hardcoded 0.30, so the report
+# disagreed with the published frame_target_found / target_found_confidence.
+TARGET_FOUND_THR = float(os.environ.get('EEHA_TARGET_FOUND_MASS_THR', TARGET_FOUND_MASS_THR_DEFAULT))
+
 ERROR_PREFIXES = ('missing_trial_error', 'transition_error', 'end_of_video_error')
 
 # Human-readable labels + tint classes for the per-sample uncertainty model's error_type
@@ -49,21 +59,6 @@ ERROR_TYPE_CLASS = {
     'no_touch': 'c-panel',
     '': 'c-missing',
 }
-
-
-def _phi(z):
-    """Standard normal CDF (mirrors StateMachineHandler._phi)."""
-    return 0.5 * (1.0 + math.erf(z / 1.4142135623730951))
-
-
-def _cellMass(mx, my, sx, sy, col, row, ncols, nrows):
-    """Gaussian mass inside cell (col,row), independent-axes approximation, board-norm
-    coords (mirrors StateMachineHandler._cell_mass so the report's graded confidence
-    matches the published target_found_confidence column)."""
-    xl, xh = col / ncols, (col + 1) / ncols
-    yl, yh = row / nrows, (row + 1) / nrows
-    return ((_phi((xh - mx) / sx) - _phi((xl - mx) / sx)) *
-            (_phi((yh - my) / sy) - _phi((yl - my) / sy)))
 
 
 def versionLabel(root):
@@ -106,7 +101,7 @@ def _errTrial(name):
 
 def _targetFound(metrics, board_size=(8, 5)):
     """Frame of the 'objetivo visto' mark = start of the first I-DT FIXATION whose mean ellipse
-    MASS on the target cell reaches the mass threshold (0.30) -- the SAME rule the writer uses
+    MASS on the target cell reaches the mass threshold (TARGET_FOUND_THR) -- the SAME rule the writer uses
     (store_results): mass-based, falling back to the centroid majority vote when a fixation has no
     covariance (no uncertainty model). target_cord is [row,col] but sequence board_coord is
     [col,row], compared swapped. None when never found (or no sequence)."""
@@ -117,7 +112,7 @@ def _targetFound(metrics, board_size=(8, 5)):
     target_colrow = [int(target[1]), int(target[0])]
     pts = [s for s in seq if isinstance(s, dict) and s.get('norm_board_coord') and s['norm_board_coord'][0] is not None]
     ncols, nrows = board_size
-    disp_max, min_n, thr = 0.06, 6, 0.30   # StateMachine defaults: _fixation_dispersion / _min_fixation_samples / _mass_threshold
+    disp_max, min_n, thr = 0.06, 6, TARGET_FOUND_THR   # StateMachine defaults: _fixation_dispersion / _min_fixation_samples / _mass_threshold
     i = 0
     while i < len(pts):
         xs, ys = [pts[i]['norm_board_coord'][0]], [pts[i]['norm_board_coord'][1]]
@@ -133,9 +128,8 @@ def _targetFound(metrics, board_size=(8, 5)):
                 cov = pts[k].get('norm_board_cov')
                 if cov is not None:
                     nb = pts[k]['norm_board_coord']
-                    masses.append(_cellMass(nb[0], nb[1],
-                                            max(cov[0][0], 1e-9) ** 0.5, max(cov[1][1], 1e-9) ** 0.5,
-                                            target_colrow[0], target_colrow[1], ncols, nrows))
+                    masses.append(_cell_mass(nb[0], nb[1], cov,
+                                             target_colrow[0], target_colrow[1], ncols, nrows))
             if masses:
                 if sum(masses) / len(masses) >= thr:
                     return int(pts[i]['frame'])
@@ -180,9 +174,8 @@ def _targetFoundConfidence(metrics, board_size=(8, 5)):
                 cov = pts[k].get('norm_board_cov')
                 if cov is not None:
                     nb = pts[k]['norm_board_coord']
-                    masses.append(_cellMass(nb[0], nb[1],
-                                            max(cov[0][0], 1e-9) ** 0.5, max(cov[1][1], 1e-9) ** 0.5,
-                                            target_colrow[0], target_colrow[1], ncols, nrows))
+                    masses.append(_cell_mass(nb[0], nb[1], cov,
+                                             target_colrow[0], target_colrow[1], ncols, nrows))
             if masses:
                 tf_conf = max(tf_conf, sum(masses) / len(masses))
             i = j
@@ -306,11 +299,11 @@ def buildDetectionSummary(versions, labels):
     how many came out as detection errors. NOT a trial-by-trial matrix — the errors are a
     processing-quality figure, not trials of the participant, so they live only here."""
     participants = sorted(set().union(*[set(v.keys()) for v in versions]) if versions else set())
-    head = ('<tr><th>Participante</th>'
+    head = ('<tr><th class="idx">#</th><th>Participante</th>'
             + ''.join(f'<th class="vcol v{i}">{html.escape(lab)}<br>reales / errores</th>'
                       for i, lab in enumerate(labels)) + '</tr>')
     rows = ''
-    for p in participants:
+    for n, p in enumerate(participants, 1):
         cells = ''
         for i, v in enumerate(versions):
             trials = v.get(p, {})
@@ -319,7 +312,7 @@ def buildDetectionSummary(versions, labels):
             cls = 'c-ok' if errs == 0 else ('c-panel' if errs <= 3 else 'c-error')
             disp = f'{valid} / {errs}' if (valid or errs) else '&nbsp;'
             cells += f'<td class="vcol v{i} {cls}">{disp}</td>'
-        rows += f'<tr><td class="name">{html.escape(p)}</td>{cells}</tr>'
+        rows += f'<tr><td class="idx">{n}</td><td class="name">{html.escape(p)}</td>{cells}</tr>'
     note = ('<p><b>Salud de la detección.</b> Trials <b>reales</b> segmentados frente a '
             '<b>errores de detección</b> por participante y versión. Un error '
             '(<code>missing_trial_error</code> = no se detectó el panel esperado; '
@@ -389,12 +382,12 @@ def buildTable(versions, labels, cell_fn):
 
 def buildFreqTable(freqs):
     rows = ''
-    for participant, (wfps, rate, cont) in sorted(freqs.items()):
+    for n, (participant, (wfps, rate, cont)) in enumerate(sorted(freqs.items()), 1):
         warn = ' c-error' if (cont == cont and cont < 0.95) else ''
-        rows += (f'<tr><td>{html.escape(participant)}</td>'
+        rows += (f'<tr><td class="idx">{n}</td><td>{html.escape(participant)}</td>'
                  f'<td>{wfps:.2f}</td><td class="{warn.strip()}">{rate:.1f}</td>'
                  f'<td class="{warn.strip()}">{cont*100:.1f}%</td></tr>')
-    return ('<table><tr><th>Participante</th><th>Vídeo World (fps)</th>'
+    return ('<table><tr><th class="idx">#</th><th>Participante</th><th>Vídeo World (fps)</th>'
             '<th>Gaze (Hz)</th><th>Continuidad</th></tr>' + rows + '</table>')
 
 
@@ -629,13 +622,15 @@ def buildStageCoveragePerParticipant(versions, labels):
     latest = versions[-1]
     marks = [('target_found', 'Objetivo visto'), ('motor_onset', 'Mano entra'),
              ('touch', 'Toque'), ('exit', 'Mano sale')]
-    head = ('<tr><th>Participante</th>'
+    head = ('<tr><th class="idx">#</th><th>Participante</th>'
             + ''.join(f'<th>{lab}</th>' for _, lab in marks) + '<th>Trials</th></tr>')
     rows = ''
+    n = 0
     for p in sorted(latest.keys()):
         valid = [t for t in latest[p].values() if isValid(t)]
         if not valid:
             continue
+        n += 1
         cells = ''
         for key, _ in marks:
             cov = 100.0 * sum(1 for t in valid if t.get(key) is not None) / len(valid)
@@ -646,7 +641,7 @@ def buildStageCoveragePerParticipant(versions, labels):
                    'border-radius:2px;vertical-align:middle;overflow:hidden">'
                    f'<span style="display:block;height:9px;width:{cov:.0f}%;background:{barcol}"></span></span>')
             cells += f'<td class="{cls}" style="white-space:nowrap">{cov:.0f}% {bar}</td>'
-        rows += f'<tr><td class="name">{html.escape(p)}</td>{cells}<td>{len(valid)}</td></tr>'
+        rows += f'<tr><td class="idx">{n}</td><td class="name">{html.escape(p)}</td>{cells}<td>{len(valid)}</td></tr>'
     note = (f'<h3>Cobertura de detección por participante — {html.escape(labels[-1])}</h3>'
             '<p>% de trials válidos con cada marca detectada (<b>objetivo visto</b>, <b>mano entra</b>, '
             '<b>toque</b>, <b>mano sale</b>), <b>por participante</b>, con barra (verde &ge;85%, '
@@ -734,18 +729,20 @@ def buildOutcomePerParticipant(versions, labels):
     latest = versions[-1] if versions else {}
     if not any(t.get('error_type') for p in latest.values() for t in p.values() if isValid(t)):
         return ''
-    head = ('<tr><th>Participante</th><th class="c-target">correcto</th>'
+    head = ('<tr><th class="idx">#</th><th>Participante</th><th class="c-target">correcto</th>'
             '<th class="c-error">fuera de objetivo</th><th class="c-panel">sin toque</th>'
             '<th class="c-missing">sin datos</th><th>Trials</th></tr>')
     rows = ''
+    n = 0
     for p in sorted(latest.keys()):
         valid = [t for t in latest[p].values() if isValid(t)]
         if not valid:
             continue
+        n += 1
         cnt = {et: sum(1 for t in valid if (t.get('error_type') or '') == et) for et in ('correct', 'off_target', 'no_touch', '')}
         off_cls = ' class="c-error"' if cnt['off_target'] else ''
         not_cls = ' class="c-panel"' if cnt['no_touch'] else ''
-        rows += (f'<tr><td class="name">{html.escape(p)}</td>'
+        rows += (f'<tr><td class="idx">{n}</td><td class="name">{html.escape(p)}</td>'
                  f'<td>{cnt["correct"]}</td><td{off_cls}>{cnt["off_target"]}</td>'
                  f'<td{not_cls}>{cnt["no_touch"]}</td>'
                  f'<td class="c-missing">{cnt[""]}</td><td>{len(valid)}</td></tr>')
@@ -770,24 +767,26 @@ def buildConfidence(versions, labels):
                 '<p>Sin modelo de incertidumbre en las calibraciones de esta versión '
                 '(columna <code>target_found_confidence</code> vacía): no se puede graficar.</p>')
     med = float(np.median(vals))
-    # found-rate at the documented suggested cuts (orientativos, NOT applied by the pipeline)
     n = len(vals)
-    # frame_target_found fires at mass >= target_found_mass_threshold (0.30)
-    found = sum(1 for v in vals if v >= 0.30)
+    thr = TARGET_FOUND_THR
+    thr_str = f'{thr:.2f}'.replace('.', ',')
+    # frame_target_found fires at mass >= target_found_mass_threshold (the shared TARGET_FOUND_THR)
+    found = sum(1 for v in vals if v >= thr)
     # finer suggested reading (orientativo, doc §7.5), NOT applied by the pipeline
     high = sum(1 for v in vals if v >= 0.5)
     near = sum(1 for v in vals if 0.2 <= v < 0.5)
     miss = sum(1 for v in vals if v < 0.2)
     svg = _svgHist(vals, bins=20, lo=0.0, hi=1.0, width=620, height=200,
-                   marker=0.30, marker_label='found ≥ 0,30')
+                   marker=thr, marker_label=f'found ≥ {thr_str}')
     note = (f'<h3>Confianza graduada de objetivo visto — {html.escape(labels[-1])}</h3>'
             '<p>Distribución de <code>target_found_confidence</code> ∈ [0,1]: la <b>masa de la '
             'elipse de incertidumbre de la mirada</b> sobre la casilla objetivo, en la mejor '
             'fijación del trial (modelo de incertidumbre por muestra, v1.4+). La marca '
-            '<code>frame_target_found</code> se dispara con <b>masa ≥ 0,30</b> (en vez de exigir la '
-            'mayoría de centroides en la celda exacta), así que un <i>near-miss</i> en la frontera '
-            'del objetivo, dentro del error del aparato, cuenta como visto.</p>'
-            f'<p>Sobre {n} trials con modelo: <b>found</b> (masa ≥ 0,30) {found} '
+            f'<code>frame_target_found</code> se dispara con <b>masa ≥ {thr_str}</b> (re-ajustado en '
+            'v1.4.1 con la masa bivariante correcta; en vez de exigir la mayoría de centroides en la '
+            'celda exacta), así que un <i>near-miss</i> en la frontera del objetivo, dentro del error '
+            'del aparato, cuenta como visto.</p>'
+            f'<p>Sobre {n} trials con modelo: <b>found</b> (masa ≥ {thr_str}) {found} '
             f'({100.0*found/n:.0f}%). Mediana {med:.2f}. Lectura más fina (orientativa, doc §7.5, '
             f'<b>no la aplica el procesado</b>): ≥0,5 (casilla más probable) {high} '
             f'({100.0*high/n:.0f}%) · 0,2–0,5 (frontera/contigua) {near} ({100.0*near/n:.0f}%) · '
@@ -856,6 +855,7 @@ table{border-collapse:collapse;font-size:12px;margin-top:8px}
 th,td{border:1px solid #bbb;padding:3px 7px;text-align:center}
 th{background:#f2f2f2;position:sticky;top:0}
 td.name{text-align:left;color:#555}
+td.idx,th.idx{color:#999;text-align:right}
 .c-ok{background:#eef} .c-target{background:#cdebc6} .c-contour{background:#d6e4f5}
 .c-panel{background:#ffe2b8} .c-eov{background:#e3d4f5} .c-error{background:#f6c6c6}
 .c-missing{background:#f7f7f7;color:#bbb}

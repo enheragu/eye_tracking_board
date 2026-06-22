@@ -205,11 +205,13 @@ def trajectoryFigure(seq_csv, pkl_path, trial_name, lang, block_trial=None, out_
     s = STR_TRAJ[lang]
     _bgr = cv.imread(os.path.join(REPO_ROOT, 'docs', 'media', 'TableroSinBordes.png'))
     bg = cv.cvtColor(_bgr, cv.COLOR_BGR2RGB)
-    # Align the board image with the normalized cell grid: the picture has a BLACK outer border, so
-    # the actual board area (cells + their WHITE margins — the margin is part of the cell, it absorbs
-    # eye-tracker error) fills only ~[0.025,0.974]x[0.039,0.960] of it. Map that NON-BLACK band to
-    # data [0,1] so the markers land on the cells AND the white margins stay (crop only the black).
-    _ys, _xs = np.where(_bgr.max(axis=2) > 50)
+    # Align the board image with the normalized cell grid. The processing normalises gaze to the
+    # PAINTED CELL GRID (BoardHandler.getPixelBoardNorm over the saturated-colour region), so map
+    # that SAME band to data [0,1]. The previous "non-black" band wrongly included the white margin
+    # between the cells and the black frame, which placed every point ~0.3 cell high (the target
+    # cell-centre landed off the cell). Detect the colored band here (un-attenuated image).
+    _a = _bgr.astype(int)
+    _ys, _xs = np.where(((_a.max(2) - _a.min(2)) > 60) & (_a.max(2) > 60))
     _H, _W = bg.shape[:2]
     _fx0, _fx1 = _xs.min() / _W, _xs.max() / _W
     _fy0, _fy1 = _ys.min() / _H, _ys.max() / _H

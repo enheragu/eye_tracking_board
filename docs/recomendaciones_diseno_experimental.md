@@ -181,7 +181,7 @@ queda **pendiente** para versiones posteriores.
   una casilla está cerca del límite de resolución (~½ casilla).
 - **`target_found` por masa de la elipse sobre una fijación**: se dispara en la primera fijación
   I-DT (dispersión en ventana sobre la mirada corregida) cuya masa de incertidumbre sobre la casilla
-  objetivo alcanza `target_found_mass_threshold` (0,30; §7.5), no en el primer paso fugaz ni por
+  objetivo alcanza `target_found_mass_threshold` (0,34; §7.5), no en el primer paso fugaz ni por
   mayoría de centroides en la celda exacta — reduce el falso positivo del "paso por encima" y cuenta
   como encontrada una mirada en la frontera del objetivo (dentro del error del aparato); el falso
   negativo (error del tracker) se mitiga con la corrección de deriva.

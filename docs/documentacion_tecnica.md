@@ -289,27 +289,44 @@ no para los paneles: la rejilla se voltea con él) mediante `estimatePoseSingleM
 histéresis (`rotation_flip_threshold=3`, así un marcador suelto no fuerza el giro), y
 calcula la homografía a la vista cenital.
 
-Para estabilizar la rejilla cuando faltan marcadores, se guarda una **rejilla de referencia**
-(mediana del rectángulo del tablero sobre ≥5 muestras estables, `reference_board_rect`); con
-ella la `cell_matrix` se mantiene aunque el contorno del fotograma actual no se reconstruya.
+La **rejilla se proyecta de forma determinista desde la homografía de ArUcos** (v1.4.1), no se
+ancla al marco negro detectado. El *warp* rectifica el tablero a un marco métrico fijo (el
+rectángulo `board_3d` siempre llena toda la vista cenital), así que el **borde interior del marco
+negro** —que delimita la rejilla de celdas, siendo cada celda su cuadrado de color más el margen
+blanco que lo rodea— cae en coordenadas warpeadas **constantes** para todo fotograma y participante
+(medido sobre los 22: desviación ~0.002–0.012 del frame por borde). La rejilla se coloca con ese
+*bounding box* calibrado (`colored_grid_frac` en `game_config.yaml`) escalado por las dimensiones
+del *warp*. Ventajas: no necesita detección del marco por fotograma (la rejilla
+existe siempre que haya pose, lo que ayuda a clasificar la mirada durante la retirada del panel
+y oclusiones parciales) y —al compartir rejilla y mirada la **misma** homografía— el temblor de
+ArUco mueve ambas a la vez y se cancela en la asignación de casilla.
+
+> **Por qué no se divide el marco detectado (corregido en v1.4.1).** El enfoque anterior dividía
+> el `boundingRect` del marco negro en 8×5. Pero `detectContour` (`RETR_EXTERNAL`) sigue el borde
+> **exterior** del marco, mientras las casillas pintadas están en el borde **interior**: la
+> rejilla quedaba más grande y derivaba hasta **~0.25 celda en los bordes** del tablero (0 en el
+> centro). El error casi se triplicó en v1.4.0 al quitar Canny (que, sin pretenderlo, caía en el
+> borde interior): medido ~0.07 celda en ≤v1.2.0 frente a ~0.25 en v1.4.0. La proyección
+> determinista elimina ese sesgo sistemático; el residual restante es el temblor de ArUco, que
+> rejilla y mirada comparten y por tanto se cancela en la asignación de casilla.
 
 El **contorno del tablero** (`detectContour`, [BoardHandler.py](../src/core/BoardHandler.py))
-no es un borde genérico: muestrea el color del marco oscuro que rodea el tablero en los
-bordes de la vista cenital, construye su máscara y se queda con el rectángulo grande
-buscándolo con `findContours` directamente sobre la máscara (sin Canny). La robustez de
-ese muestreo y por qué se hace así se detalla en el hallazgo de §4 más abajo.
+se mantiene, pero ya **no** alimenta la rejilla: sirve como señal de «tablero limpio y
+completamente visible» (`contour_detected_raw`, que la mano rompe al cruzar el borde). No es un
+borde genérico: muestrea el color del marco oscuro que rodea el tablero en los bordes de la
+vista cenital, construye su máscara y se queda con el rectángulo grande buscándolo con
+`findContours` directamente sobre la máscara (sin Canny). La robustez de ese muestreo y por qué
+se hace así se detalla en el hallazgo de §4 más abajo.
 
 | Tablero despejado | Mano dentro (alcance) | Máscara de blanco (alcance) |
 |---|---|---|
 | ![board clean](media/segmentation/01_board_warp_clean.png) | ![board reach](media/segmentation/02_board_warp_reach_handsin.png) | ![white mask](media/segmentation/05_white_mask_reach.png) |
 
-Sobre esa vista cenital, la `cell_matrix` se construye dividiendo el rectángulo del tablero
-en una rejilla regular de 8×5 (`computeBoardMatrixFromRect`): el rectángulo viene de la
-homografía de ArUcos (estabilizado por la mediana `reference_board_rect`) o, como respaldo, del
-contorno detectado. Los tamaños de celda son flotantes (la división entera acumulaba hasta
-`board_size−1` px de resto en los bordes derecho/inferior y clasificaba mal la mirada de las
-últimas casillas como `not_board`). A cada casilla se le asigna su **propiedad** —color, forma
-y si es ficha o hueco— desde `game_config.yaml` (rotada 180° si el tablero se ve girado).
+`computeBoardMatrixFromRect` divide ese rectángulo calibrado en la rejilla regular de 8×5. Los
+tamaños de celda son flotantes (la división entera acumulaba hasta `board_size−1` px de resto en
+los bordes derecho/inferior y clasificaba mal la mirada de las últimas casillas como
+`not_board`). A cada casilla se le asigna su **propiedad** —color, forma y si es ficha o
+hueco— desde `game_config.yaml` (rotada 180° si el tablero se ve girado).
 `getCellIndex` localiza la casilla de una coordenada ya proyectada; `getPixelBoardNorm` la
 normaliza contra el área del tablero (0,0 esquina superior izquierda; 1,1 inferior derecha).
 
@@ -356,6 +373,11 @@ El arreglo tiene dos partes, ambas medidas:
    contorno y lo hacía parpadear. Y sin operación de `close`: un *close* rellenaría el hueco
    que abre la mano y cegaría la señal de corte (el `motor_onset` se detecta como pérdida de
    este contorno; ver §12).
+
+> Nota (v1.4.1): quitar Canny tenía un efecto lateral —el rectángulo pasaba del borde interior
+> del marco al exterior, desalineando la rejilla (ver el recuadro de §4)—. Desde v1.4.1 la
+> rejilla se proyecta desde la homografía y **no** depende de este contorno, así que esta
+> detección sirve solo como señal de marco visible/roto, donde «sin Canny» sí es la mejor opción.
 
 **Resultado** (participante 008, fase de búsqueda): el *flicker* del contorno (transiciones 0↔1
 por fotograma) baja de 0,097 a 0,033 sin perder arranques, y un alcance real rompe el
@@ -754,9 +776,9 @@ guardada como `norm_board_cov` en cada entrada de la secuencia. De ahí:
 - **`target_found_confidence`** (CSV de trials, por trial). Sobre las fijaciones I-DT del trial, la
   **masa media** de cada fijación sobre la **casilla objetivo**, tomando el **máximo** del trial. Es el
   valor continuo detrás de la marca `frame_target_found`, que se dispara en la **primera fijación** cuya
-  masa media alcanza `target_found_mass_threshold` (0,30): una mirada en la frontera del objetivo
-  —dentro del error del aparato— cuenta como encontrada, en vez de exigir la mayoría de centroides en la
-  celda exacta. La columna continua permite graduar más fino si el análisis lo necesita.
+  masa media alcanza `target_found_mass_threshold` (0,34; re-ajustado en v1.4.1, ver abajo): una mirada
+  en la frontera del objetivo —dentro del error del aparato— cuenta como encontrada, en vez de exigir la
+  mayoría de centroides en la celda exacta. La columna continua permite graduar más fino si el análisis lo necesita.
 - **Mirada tapada = 0 % tablero.** El gaze `on_panel` (dentro del polígono del panel detectado, §5)
   y el `blank` (celda tapada por una superficie plano-blanca —el cartón del panel barriendo— durante
   la retirada) no se proyectan: `onboard_mass = 0`, sin `cell_dist`. No son observaciones de una
@@ -767,12 +789,22 @@ guardada como `norm_board_cov` en cada entrada de la secuencia. De ahí:
 masa, no la mayoría de centroides en la celda: una fijación pegada a la frontera del objetivo
 (centroide técnicamente dentro, pero la elipse repartida con la vecina) la decidía el voto a sí/no,
 cuando ese reparto **es** el error que el modelo compensa. Sobre los 22 (1280 trials con confianza),
-pasar de la mayoría-en-celda a masa ≥0,30 **recupera 52** trials que el voto descartaba (la mirada
-estaba en la frontera o la contigua) y solo descarta **1** caso-frontera que el voto redondeaba a
-dentro; `found` pasa de 1017 a 1068. El umbral 0,30 se midió sobre la cohorte (distribución abajo):
-por debajo se rescata casi sin coste, y por encima de ~0,40 se pierde más de lo que se gana. Los
-cortes 0,2/0,5 de la figura son una **lectura sugerida** para graduar el análisis, no umbrales que
-aplique el procesado.
+pasar de la mayoría-en-celda a masa por encima del umbral **recupera ~50** trials que el voto descartaba
+(la mirada estaba en la frontera o la contigua) y apenas descarta casos-frontera que el voto redondeaba a
+dentro. Los cortes 0,2/0,5 de la figura son una **lectura sugerida** para graduar el análisis, no
+umbrales que aplique el procesado.
+
+**Re-ajuste del umbral (v1.4.1).** La masa por celda se calculaba antes con una aproximación **marginal**
+(producto de dos CDF 1-D), que ignora la inclinación de la elipse y erraba hasta ~0,16 en celdas con
+elipse inclinada; v1.4.1 la sustituye por la **integral normal bivariante** exacta. Eso desplaza la
+escala de masa: la **frontera geométrica 50/50** (centroide justo en el borde objetivo/vecina), que el
+marginal situaba en ~0,34, está en realidad en **~0,443** (medido sobre los 22, ~12k fijaciones). El
+umbral se fija **por debajo** de esa frontera a propósito —la elipse ya absorbe el error del aparato, así
+que una fijación que el *tracker* empujó algo hacia la vecina pero cuya elipse aún deja masa sustancial
+en el objetivo debe contar como vista—: **0,34**, que rescata esos casos y se mantiene muy por encima del
+ruido (~0,2), sin la laxitud del viejo 0,30 (que contaba fijaciones con el centroide claramente fuera de
+la celda). En la cohorte: `found` 1088 (0,30) → **1069** (0,34) → 1037 (0,38). El informe HTML reproduce
+exactamente este criterio (misma `_cell_mass` bivariante y mismo umbral).
 
 ![target_found_confidence graduado frente al binario](media/documentation/pfound_confianza.png)
 
@@ -816,7 +848,7 @@ stateDiagram-v2
     test_motor_recovery --> test_finish_execution: hand_exit, o aparece el panel siguiente (by_next_panel)
     test_finish_execution --> init: trial cerrado y publicado
     note left of test_start_execution: search_start: empiezan a contar la búsqueda y la mirada anticipada
-    note right of test_execution: target_found: primera fijación (I-DT) con masa ≥0,30 sobre el objetivo
+    note right of test_execution: target_found: primera fijación (I-DT) con masa ≥0,34 sobre el objetivo
     note right of test_motor_recovery: marcas target_touch y hand_exit (mejor esfuerzo)
 ```
 
@@ -967,7 +999,7 @@ A partir del `board_metrics` de cada *trial*, `store_results` calcula las column
 - **`target_found` por fijación (I-DT), no por muestra suelta.** No es la primera muestra que
   cae sobre la casilla objetivo (eso disparaba en un paso fugaz de camino a otra pieza), sino el
   inicio de la primera fijación cuya **masa de incertidumbre** sobre el objetivo alcanza el umbral
-  (`target_found_mass_threshold` = 0,30; §7.5), consciente del error del aparato en vez de un voto
+  (`target_found_mass_threshold` = 0,34; §7.5), consciente del error del aparato en vez de un voto
   duro de centroides. Una fijación
   es una racha de ≥`target_found_min_fixation_samples` (6) muestras cuyo *bounding-box* normalizado
   al tablero se mantiene por debajo de `target_found_fixation_dispersion` (0,06): es una dispersión
@@ -1316,7 +1348,7 @@ tasa de gaze, nº de calibraciones) están en
 | `SMOOTH_WINDOW` / `SMOOTH_VEL_THRESHOLD_PX` | EyeDataHandler | 4 / 15 | semiventana y umbral de sacada del suavizado de mirada (§7.3) |
 | `GATE_MIN_GAIN_LOWER` / `GATE_MIN_BASE_PX` | gaze_calibration | 0.0 / 12 | compuerta de adopción de la corrección de deriva (§7.1) |
 | `target_found_min_fixation_samples` / `_fixation_dispersion` | StateMachine | 6 / 0.06 | tamaño y dispersión de la fijación I-DT para `target_found` (§10) |
-| `target_found_mass_threshold` | StateMachine | 0.30 | masa de la elipse sobre el objetivo para marcar `target_found` (§7.5) |
+| `target_found_mass_threshold` | StateMachine | 0.34 | masa de la elipse sobre el objetivo para marcar `target_found` (§7.5) |
 
 Los valores se han ajustado midiendo sobre muestra; no son nominales.
 
