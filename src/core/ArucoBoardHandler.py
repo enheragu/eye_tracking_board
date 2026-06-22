@@ -350,9 +350,14 @@ def aruco_board_transform(aruco_image_contours, aruco_3d_contours, board_3d_cont
     board_image_contours = cv.perspectiveTransform(board_3d_contours.reshape(-1, 1, 2), np.linalg.inv(M1)).reshape(-1, 2)
     board_image_contours = sort_points_clockwise(board_image_contours)
 
-    # Transform between board_image_points to new framed points
-    # _, (img_width, img_height) = rescale_3d_points(board_3d_contours, img_shape)
-    img_width, img_height = img_shape[1], img_shape[0]
+    # Transform between board_image_points to new framed points. The warp target keeps the
+    # board's METRIC aspect ratio (v1.4.1): map board_3d to a frame scaled by rescale_3d_points
+    # (board aspect ~1.55) instead of stretching it to the full camera frame (1.778), which made
+    # the top-view ~16% too wide. This matches the early-exit path (getTransform) so the warp
+    # size is the same whether or not the pose is solved. Numerically neutral for the gaze->cell
+    # result and the covariance (both projected per-axis through getPixelBoardNorm / the Jacobian);
+    # it only fixes the visual proportions and keeps warped px ~isotropic for any future metric.
+    _, (img_width, img_height) = rescale_3d_points(board_3d_contours, img_shape)
     image_points_framed = np.array([
         [0, 0],
         [img_width - 1, 0],

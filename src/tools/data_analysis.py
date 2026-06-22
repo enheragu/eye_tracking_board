@@ -190,9 +190,20 @@ def plot_combined_data(all_data):
         plt.close()
 
 
+# Bounding box [x0,y0,x1,y1] of the painted 8x5 cell grid in the canonical board image
+# (TableroSinBordes.png), as fractions. The processing normalises gaze to THIS region
+# (getPixelBoardNorm over the colored cells), so norm [0,1] must map here, not to the whole image
+# (white margin + black frame), which placed points off-cell (target centre ~0.3 cell high).
+CANON_COLORED_FRAC = [0.0348, 0.0540, 0.9645, 0.9449]
+
+
 def denormalize_coordinates(norm_coords, img_width, img_height):
-    """Convierte coordenadas normalizadas a píxeles en la imagen"""
-    return [(x * img_width, y * img_height) for x, y in norm_coords]
+    """Coordenadas normalizadas a píxeles, mapeadas sobre la zona de celdas pintadas
+    (CANON_COLORED_FRAC), la MISMA a la que normaliza el procesamiento (getPixelBoardNorm)."""
+    x0, y0, x1, y1 = CANON_COLORED_FRAC
+    px0, py0 = x0 * img_width, y0 * img_height
+    sw, sh = (x1 - x0) * img_width, (y1 - y0) * img_height
+    return [(px0 + x * sw, py0 + y * sh) for x, y in norm_coords]
 
 def plot_single_trial(ax, trial_data, color, label=None):
     """Dibuja un trial individual en el axis proporcionado"""

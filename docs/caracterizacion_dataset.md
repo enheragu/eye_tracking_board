@@ -22,6 +22,7 @@ heterogeneidad condiciona cualquier análisis posterior.
 - [4. Contexto de adquisición](#4-contexto-de-adquisición)
 - [5. Reproducción offline de la calibración](#5-reproducción-offline-de-la-calibración)
 - [6. Corrección de deriva de mirada: ganancias por participante](#6-corrección-de-deriva-de-mirada-ganancias-por-participante)
+- [7. Calidad de mirada y cobertura de objetivo visto por modo de adquisición](#7-calidad-de-mirada-y-cobertura-de-objetivo-visto-por-modo-de-adquisición)
 
 ## 1. Equipo y captura
 
@@ -157,3 +158,89 @@ todos de 1 sola calibración —los que Pupil nunca reseteó—. El resto queda 
 los claramente perjudicados (058 −37 %) como los positivos pero inciertos (la CV con 6 paneles
 tiene varianza alta, su IC inferior cae por debajo de 0). La compuerta corrige los errores sólidos
 (IC inferior > 0) y deja identidad en lo dudoso: nunca arriesga empeorar a nadie.
+
+## 7. Calidad de mirada y cobertura de objetivo visto por modo de adquisición
+
+Esta sección complementa el modo de mapeo (§2), el número de calibraciones (§3) y el error base de
+la corrección de deriva (§6), relacionando la configuración de adquisición con dos magnitudes que
+aquéllas no recogen: (a) el **tamaño de la elipse de incertidumbre** de la mirada —`bias_rms` =
+√(½·traza de `bias_cov_px`), el error de exactitud/deriva en px de imagen— y (b) la **cobertura de
+la marca `frame_target_found`** («objetivo visto»): la fracción de *trials* en los que el modelo de
+incertidumbre confirma que se miró la casilla objetivo (masa de la elipse sobre la casilla ≥ umbral
+0,34; mecanismo en [documentacion_tecnica.md §7.5](documentacion_tecnica.md)). Una cobertura baja no
+indica necesariamente peor búsqueda: con baja calidad de mirada no puede afirmarse con confianza que
+el participante mirara la casilla exacta.
+
+Medido sobre el procesado **v1.4.1** (`frame_target_found` a umbral 0,34) y los artefactos de
+`calibration/gaze/`, ordenado por cobertura:
+
+| Participante | Modo | Objetivo visto | Cobertura | `bias_rms` (px) | jitter σ (px) | `med_conf` |
+|---|---|---:|---:|---:|---:|---:|
+| 008   | 3D    | 22/50 | 44 %  | 29.7 | 17.9 | 0.22 |
+| 011   | 2D    | 28/53 | 53 %  | 19.8 | 16.8 | 0.40 |
+| 002   | 3D    | 33/60 | 55 %  | 28.2 | 21.1 | 0.42 |
+| 009   | 2D    | 35/60 | 58 %  | 25.7 | 24.5 | 0.39 |
+| 001   | 3D    | 38/60 | 63 %  | 31.6 | 19.8 | 0.37 |
+| 058   | 2D    | 44/60 | 73 %  | 20.6 | 23.0 | 0.58 |
+| 051   | 2D    | 47/60 | 78 %  | 20.9 | 17.1 | 0.71 |
+| 024   | 3D    | 49/60 | 82 %  | 24.9 | 20.1 | 0.51 |
+| 035   | 2D    | 51/60 | 85 %  | 24.1 | 13.6 | 0.57 |
+| 007_1 | 3D    | 53/60 | 88 %  | 28.7 | 16.8 | 0.63 |
+| 054   | 2D    | 49/54 | 91 %  | 20.6 | 20.3 | 0.79 |
+| 042   | 2D    | 54/59 | 92 %  | 20.0 |  9.5 | 0.84 |
+| 007   | 2D    | 55/59 | 93 %  | 23.7 | 20.5 | 0.61 |
+| 012   | 2D    | 56/60 | 93 %  | 24.0 | 13.8 | 0.67 |
+| 044   | 2D    | 47/50 | 94 %  | 14.5 | 19.4 | 0.76 |
+| 064   | 2D    | 57/60 | 95 %  | 12.7 |  7.9 | 0.90 |
+| 032   | 2D    | 57/59 | 97 %  | 15.4 | 12.2 | 0.83 |
+| 055   | 2D    | 56/57 | 98 %  | 15.9 | 17.7 | 0.88 |
+| P-B   | 2D    | 59/60 | 98 %  | 18.4 | 17.3 | 0.80 |
+| 027   | 2D+3D | 60/60 | 100 % | 19.8 | 11.6 | 0.83 |
+| 049   | 2D    | 58/58 | 100 % | 12.2 | 11.2 | 0.96 |
+| P-A   | 2D    | 61/61 | 100 % | 14.9 |  9.4 | 0.90 |
+
+(total cohorte: **1069/1280 = 83 %**.)
+
+**La cobertura la determina el tamaño de la elipse, no el modo en sí.** Correlaciones sobre los 22:
+
+| factor | correlación con cobertura |
+|---|---:|
+| `med_conf` (mediana de la masa de la mejor fijación del *trial*) | **+0,92** |
+| `bias_rms` (exactitud/deriva, px) | −0,67 |
+| jitter σ (px) | −0,55 |
+| `base_px` (residual de calibración, §6) | −0,54 |
+
+La cobertura está **casi determinada** (`med_conf` r=+0,92) por lo concentrada que es la elipse de
+cada participante: elipse pequeña → masa concentrada en la casilla → supera el umbral.
+
+**Asociación con el modo de mapeo (2D vs 3D):**
+
+| grupo | n | cobertura media | `bias_rms` medio |
+|---|---:|---:|---:|
+| **3D** | 5 | **66 %** | 28.6 px |
+| **2D** | 16 | **87 %** | 19.0 px |
+
+Los 5 participantes mapeados en **3D** (001, 002, 007_1, 008, 024) concentran las coberturas más
+bajas: su elipse de exactitud/deriva es mayor (28.6 vs 19.0 px de media). Coherente con que el 3D
+monocular sea menos exacto (§3) y con las dificultades de ajuste del modelo 3D reportadas en la toma
+(§4). El **ojo registrado y el carácter mono/binocular** (detallados por participante en §2) no
+añaden poder explicativo: la media de los registros monoculares y de los binoculares coincide
+(~83 %), pero con solo 3 registros binoculares (007, 009, P-B) el contraste mono/binocular no es
+concluyente; el factor asociado a la cobertura es el modo de mapeo y, sobre todo, el tamaño de la
+elipse.
+
+**Factores descartados o no registrables.** El **brillo y el contraste de la imagen de ojo**
+—medidos sobre los vídeos IR `eyeN.mp4` (media, contraste RMS, rango dinámico y contraste
+pupila-iris, ~80 fotogramas por registro)— **no se asocian** con la cobertura ni con `bias_rms`
+(|r| ≤ 0,20): en imagen IR de pupila oscura el color de iris visible apenas se traslada a la imagen,
+de modo que «ojos claros/oscuros» no es un factor medible aquí. El **color de iris** y la
+**iluminación** de escena no se registran. La baja **confianza de pupila** de algunos registros
+(p. ej. 008 ≈ 0,43) apunta a peor calidad de imagen ocular, pero su causa (iluminación,
+pestañas/maquillaje, deslizamiento, fisiología) no puede aislarse con el material disponible.
+
+**Cautelas.** (1) n pequeño —5 registros en 3D— ⇒ es una **asociación**, no una causa aislada: el
+3D va confundido con la dificultad de calibración (§4). (2) La cobertura baja es una medida
+**honesta de la incertidumbre del aparato**, no de peor búsqueda; bajar el umbral inflaría la cifra
+contando miradas que el aparato sitúa a más de una casilla del objetivo. (3) Para análisis
+posteriores conviene **estratificar/ponderar por calidad de mirada** (`bias_rms` / `med_conf`) y
+tratar los 5 registros 3D como un subgrupo de menor exactitud.

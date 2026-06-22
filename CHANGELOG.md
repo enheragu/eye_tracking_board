@@ -4,6 +4,36 @@ All notable changes to this project are documented in this file. Versions prior 
 1.0.0 were reconstructed from the git history. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [1.4.1](https://github.com/enheragu/eye_tracking_board/releases/tag/v1.4.1) - 2026-06-22
+
+Corrects a systematic cell-grid misalignment that affected gaze→cell assignment and the touch
+ROIs (not just the visualization), worst at the board edges; plus four issues found in an audit of
+the geometry/gaze/analysis code.
+
+### Fixed
+- **Cell grid projected from the ArUco homography, not the detected black frame** (`BoardHandler.step`).
+  The 8×5 grid was the bounding rect of the frame's **outer** edge while the painted cells sit at the
+  **inner** edge → up to ~0.25-cell drift at the edges (worst since v1.4.0 dropped Canny). It is now
+  placed deterministically on the ArUco-rectified warp from a calibrated inner-frame box
+  (`colored_grid_frac`; each cell = painted square + white margin), so grid and gaze share one warp and
+  ArUco jitter cancels. Also fixes `getPixelBoardNorm` and the `board_occ` crop. Doc §4.
+- **Gaze-uncertainty cell mass uses the full 2×2 covariance** (`StateMachineHandler._cell_mass`): was a
+  product of two 1-D CDFs (marginal), which ignored the ellipse tilt and erred up to ~0.16 in cell mass;
+  now the exact bivariate-normal integral. Doc §7.5.
+- **`target_found_mass_threshold` re-tuned 0.30 → 0.34** for the corrected mass: it sits just below the
+  geometric 50/50 cell border, rescuing device-error displacements without the old 0.30 over-count
+  (cohort: 1088 → 1069 trials found). One shared default keeps the report and the writer in sync;
+  overridable via `EEHA_TARGET_FOUND_MASS_THR`. Doc §7.5, characterization §7.
+- **Gaze covariance scaled by the real world-frame size**, not a hardcoded 1280×720 (`_projectGazeCov`
+  and the debug ellipse): the mean used the real frame while the covariance used a literal, so the
+  uncertainty was mis-scaled on any non-720p video.
+- **Top-view warp keeps the board's metric aspect** (`aruco_board_transform`): it stretched the board to
+  the camera frame (~16% too wide); cells now render ~square. Numerically neutral for gaze→cell (per-axis);
+  the contour area gate was made relative to the warp area.
+- **Trajectory figures anchor gaze to the painted cell grid** across the three plotters
+  (`generate_doc_figures`, `project_paths`, `data_analysis`), which used three different image alignments
+  and placed the target ~0.3 cell high.
+
 ## [1.4.0](https://github.com/enheragu/eye_tracking_board/releases/tag/v1.4.0) - 2026-06-18
 
 A per-sample gaze **uncertainty model** that treats each gaze as a distribution rather than a
@@ -37,21 +67,16 @@ detections (board frame and sample panel).
 
 ## [1.3.0] - 2026-06-16 <!-- developed but never separately tagged; ships within v1.4.0 -->
 
-Gaze-quality correction, a signal-processing model for the motor marks, and reliability
-hardening of the pipeline. The gaze is cleaned before mapping (per-participant **drift
-correction** from the in-video calibration panels — CV-gated so it never worsens — plus
-**blink exclusion** and velocity-gated smoothing, all preserving the sampling rate). The motor
-marks (`motor_onset` / `target_touch` / `hand_exit`) are re-derived post-hoc from the per-frame
-occlusion profile (the **bump model**: rise → peak → valley on the target `fT` and whole-board
-`board_occ` occlusion curves), which is persisted as `signal_trace`, so a change to the post-hoc
-stage reprocesses in **seconds without re-decoding video**. A reliable **`off_target`** anomaly
-(a completed reach — hand in *and* out of the board — with neither a target touch nor the gaze
-committed to the target) plus the **gaze-validated piece** capture "went elsewhere" errors. The
-key lesson of this release: **result quality must not depend on remembering a flag** — slow/
-precise is now the default, every output records its `run_config`, and incomplete/partial runs
-warn loudly. Validated on the **22 participants**: on the common trials, hand-exit coverage
-**77 → 86%** (the bump model), target-touch unchanged; the absolute drops seen in a first run
-were traced to fast-mode subsampling and a mis-tuned exception config, both fixed below.
+Gaze-quality correction, post-hoc motor marks, and reliability hardening. The gaze is cleaned
+before mapping (per-participant **drift correction** from the in-video panels, CV-gated so it never
+worsens; **blink exclusion**; velocity-gated smoothing — all rate-preserving). The motor marks
+(`motor_onset` / `target_touch` / `hand_exit`) are re-derived from the per-frame occlusion profile
+(the **bump model**), persisted as `signal_trace` so a change to the post-hoc stage **reprocesses in
+seconds without re-decoding video**. Adds an **`off_target`** anomaly and the **gaze-validated
+piece**. Key lesson: **result quality must not depend on remembering a flag** — slow/precise is now
+the default, every output records its `run_config`, and partial runs warn. Validated on the **22
+participants**: hand-exit coverage **77 → 86%** (bump model), target-touch unchanged; first-run drops
+were fast-mode subsampling + a mis-tuned exception config, both fixed below.
 
 ### Added
 - **Gaze drift correction** ([`GazeCorrectionHandler`](src/core/GazeCorrectionHandler.py),
@@ -117,19 +142,15 @@ were traced to fast-mode subsampling and a mis-tuned exception config, both fixe
 
 ## [1.2.0](https://github.com/enheragu/eye_tracking_board/releases/tag/v1.2.0) - 2026-06-15
 
-Re-based trial model (homography + occlusion) and a complete per-trial timeline. The trial
-now **starts at the search onset** (panel removal / first board gaze) instead of the
-full-board contour confirmation, so `trial_duration_s` **increases** and is **not
-comparable** with 0.x/1.0/1.1 — by design; reprocess the whole cohort with 1.2 and compare
-only within 1.2. All gaze in the trial window is now recorded (tagged by phase), and state
-transitions plus behavioural marks are published as one timeline. Validated on the **22
-participants** (**1296 real trials**): vs 1.1.0 on the 18 common participants, target-touch
-coverage **82.3% → 94.7%**, hand-exit **65.9% → 78.5%**, **+31 net real trials**, and **0
-implausible touches** (none before board appearance or after the hand leaves). Per-session config
-fixes recovered desynced sequences (a re-presented panel left one participant at 10 detected
-trials → **62**); the ArUco fix below removes `few_arucos` failures at the cost of a small
-contour-timing shift (one participant **−3** trials). Detail in the
-[guide](docs/guia_procesamiento.md) and [technical doc](docs/documentacion_tecnica.md).
+Re-based trial model (homography + occlusion) and a complete per-trial timeline. The trial now
+**starts at the search onset** (panel removal / first board gaze) instead of the full-board contour,
+so `trial_duration_s` **increases** and is **not comparable** with ≤1.1 — by design; reprocess the
+cohort and compare only within 1.2. All gaze in the trial window is recorded (tagged by phase), and
+state transitions plus behavioural marks are published as one timeline. Validated on the **22
+participants** (**1296 real trials**): vs 1.1.0 on the 18 common participants, target-touch coverage
+**82.3 → 94.7%**, hand-exit **65.9 → 78.5%**, **+31 net trials**, **0 implausible touches**. Per-session
+config fixes recovered desynced sequences; the ArUco fix below removes `few_arucos` failures. Detail
+in the [guide](docs/guia_procesamiento.md) and [technical doc](docs/documentacion_tecnica.md).
 
 ### Added
 - **Unified per-trial timeline** (`trials_data_<id>_transitions.csv` + the stacked

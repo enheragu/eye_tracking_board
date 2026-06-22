@@ -55,38 +55,74 @@ def IsSamePanel(panel1, panel2):
            panel1['shape'] == panel2['shape'])
 
 
+# Default mass threshold for target_found (re-tuned in v1.4.1). SINGLE SOURCE OF TRUTH: the report
+# (generate_report) imports this constant, so the report's "objetivo visto" count can never silently
+# diverge from the writer's published frame_target_found. Overridable per-run via the env var below.
+TARGET_FOUND_MASS_THR_DEFAULT = 0.34
+
+
 def _phi(z):
     """Standard normal CDF."""
     return 0.5 * (1.0 + math.erf(z / 1.4142135623730951))
 
 
-def _cell_mass(mx, my, sx, sy, col, row, ncols, nrows):
-    """Gaussian probability mass inside cell (col,row), independent-axes (marginal)
-    approximation. mx,my and the cell are in board-normalised coords (0..1)."""
-    xl, xh = col / ncols, (col + 1) / ncols
-    yl, yh = row / nrows, (row + 1) / nrows
-    return ((_phi((xh - mx) / sx) - _phi((xl - mx) / sx)) *
-            (_phi((yh - my) / sy) - _phi((yl - my) / sy)))
+# Gauss-Legendre nodes/weights mapped to [0,1], for the bivariate-normal CDF integral below.
+_GL_X, _GL_W = np.polynomial.legendre.leggauss(24)
+_GL_X = 0.5 * (_GL_X + 1.0)
+_GL_W = 0.5 * _GL_W
+
+
+def _phi2(h, k, rho):
+    """Standard bivariate normal CDF P(X<=h, Y<=k) with correlation rho, via Sheppard's
+    identity  Phi2(h,k;rho) = Phi(h)Phi(k) + integral_0^rho phi_kernel(t) dt  (Gauss-Legendre).
+    Accurate to ~1e-7 vs scipy (validated); lets the gaze ellipse be integrated over a cell
+    WITH its tilt, not as two independent axes."""
+    if rho > 0.999999:
+        rho = 0.999999
+    elif rho < -0.999999:
+        rho = -0.999999
+    base = _phi(h) * _phi(k)
+    if abs(rho) < 1e-12:
+        return base
+    t = _GL_X * rho
+    denom = 1.0 - t * t
+    kern = np.exp(-(h * h - 2.0 * t * h * k + k * k) / (2.0 * denom)) / (2.0 * np.pi * np.sqrt(denom))
+    return base + rho * float(np.dot(_GL_W, kern))
+
+
+def _cell_mass(mx, my, cov, col, row, ncols, nrows):
+    """Gaussian probability mass inside cell (col,row) under N((mx,my), cov), using the FULL
+    2x2 covariance (its off-diagonal/tilt, not just the marginal variances). mx,my and the
+    cell are in board-normalised coords (0..1). The integral over the axis-aligned cell
+    rectangle is Phi2 at its four corners. The earlier marginal (independent-axes) product
+    discarded cov[0][1] and erred by up to ~0.16 in cell mass for tilted ellipses -- material
+    against target_found_mass_threshold (0.30), so it is replaced here (v1.4.1)."""
+    sx = max(cov[0][0], 1e-12) ** 0.5
+    sy = max(cov[1][1], 1e-12) ** 0.5
+    rho = cov[0][1] / (sx * sy)
+    zxl, zxh = (col / ncols - mx) / sx, ((col + 1) / ncols - mx) / sx
+    zyl, zyh = (row / nrows - my) / sy, ((row + 1) / nrows - my) / sy
+    m = (_phi2(zxh, zyh, rho) - _phi2(zxl, zyh, rho)
+         - _phi2(zxh, zyl, rho) + _phi2(zxl, zyl, rho))
+    return m if m > 0.0 else 0.0
 
 
 def _cell_distribution(mx, my, cov, ncols, nrows, topk=3, min_mass=0.02):
-    """Top-k cells by Gaussian mass + total on-board mass, from a board-norm centroid
-    and 2x2 covariance (marginal variances). Returns (dist_string, onboard_mass) where
-    dist_string is 'col,row:mass|...'. ('', '') when no covariance is available."""
+    """Top-k cells by Gaussian mass + total on-board mass, from a board-norm centroid and
+    full 2x2 covariance. Returns (dist_string, onboard_mass) where dist_string is
+    'col,row:mass|...'. ('', '') when no covariance is available."""
     if cov is None or mx is None:
         return '', ''
-    sx = max(cov[0][0], 1e-9) ** 0.5
-    sy = max(cov[1][1], 1e-9) ** 0.5
     cells, onboard = [], 0.0
     for c in range(ncols):
         for r in range(nrows):
-            m = _cell_mass(mx, my, sx, sy, c, r, ncols, nrows)
+            m = _cell_mass(mx, my, cov, c, r, ncols, nrows)
             onboard += m
             if m >= min_mass:
                 cells.append((m, c, r))
     cells.sort(reverse=True)
     dist = '|'.join(f"{c},{r}:{m:.2f}" for m, c, r in cells[:topk])
-    # the marginal (independent-axes) approximation can sum slightly above 1.0; clamp.
+    # disjoint cells -> the integral sums to <=1 already; clamp only against numeric drift.
     return dist, round(min(onboard, 1.0), 3)
 
 
@@ -236,11 +272,19 @@ class StateMachine:
         # fixation. A cell is ~1/8 wide; allow some wander around it. Tunable;
         # validate against measured fixation/transit dispersions on real trials.
         self.target_found_fixation_dispersion = 0.06
-        # mean ellipse mass on the target cell (over a fixation) required to call it
-        # found. Measured on the 22-participant cohort: 0.30 rescues ~52 near-miss
-        # trials the discrete vote discarded while dropping only 3 boundary-hugging
-        # ones; ~0.34 is a fixation centred exactly on the target/neighbour border.
-        self.target_found_mass_threshold = 0.30
+        # mean ellipse mass on the target cell (over a fixation) required to call it found.
+        # RE-TUNED in v1.4.1 (0.30 -> 0.34) after the bivariate cell-mass fix. Reference point:
+        # the geometric 50/50 border (gaze centroid exactly on the target/neighbour edge) is
+        # ~0.435 of mass under the correct bivariate integral (measured on the 22-participant
+        # v1.4.1 cohort, 12k fixations) -- the old marginal estimator mis-put it at ~0.34. The
+        # threshold is set BELOW that border ON PURPOSE: the uncertainty ellipse already absorbs
+        # the device error, so a fixation the tracker nudged slightly onto the neighbour but whose
+        # ellipse still lands substantial mass on the target should count as "looked at the
+        # target". 0.34 rescues those (and stays well above the ~0.2 noise floor) while no longer
+        # being as lenient as the old 0.30, which counted fixations whose centre fell clearly
+        # outside the cell. Cohort: 1064 of 1283 found at 0.34 (vs 1083 at 0.30, 1029 at 0.38).
+        # Overridable via EEHA_TARGET_FOUND_MASS_THR to sweep / re-tune with reprocess_landmarks.
+        self.target_found_mass_threshold = float(os.environ.get('EEHA_TARGET_FOUND_MASS_THR', TARGET_FOUND_MASS_THR_DEFAULT))
 
         ## Motor recovery: after the trial end is decided, keep watching until the
         # board contour comes back in a sustained way (the hand left the board) to
@@ -380,7 +424,7 @@ class StateMachine:
                 # trajectory figures. Skipped for panel / covered-cell gaze (not board gaze).
                 cov = self.gaze_cov_list[index] if index < len(self.gaze_cov_list) else None
                 if cov is not None and kind not in ('on_panel', 'blank'):
-                    Wd, Hd = 1280.0, 720.0
+                    Wd, Hd = (float(x) for x in getattr(self, 'world_frame_wh', (1280.0, 720.0)))
                     cpx = np.array([[cov[0][0] * Wd * Wd, cov[0][1] * Wd * Hd],
                                     [cov[1][0] * Hd * Wd, cov[1][1] * Hd * Hd]])
                     wv, vv = np.linalg.eigh(cpx)
@@ -564,6 +608,17 @@ class StateMachine:
         self.norm_coord_list = self.eye_data_handler.step(capture_idx)
         self.gaze_cov_list = getattr(self.eye_data_handler, 'last_cov_list', None) or []
         self.gaze_classification = []
+        # Actual world-frame size: gaze means are denormalised against it (below) and the
+        # per-sample covariance must be scaled to the SAME pixel space in _projectGazeCov
+        # (v1.4.1 -- was hardcoded 1280x720, which silently mis-scaled the covariance on any
+        # non-720p video while the mean stayed correct). Warn once if the frame is not the
+        # size the per-participant uncertainty MODEL was calibrated at (1280x720).
+        self.world_frame_wh = (original_image.shape[1], original_image.shape[0])
+        if self.world_frame_wh != (1280, 720) and not getattr(self, '_warned_frame_size', False):
+            self._warned_frame_size = True
+            log(f"[StateMachine] WARNING: world frame {self.world_frame_wh} != (1280, 720); the gaze "
+                f"uncertainty model (GazeUncertaintyModel/EyeDataHandler) assumes 720p px units -- "
+                f"covariance magnitude may be mis-scaled. Re-check the calibration px units.")
         self.desnormalized_coord_list = []
         for norm_coord in self.norm_coord_list:
             # Gaze normalized coords are relative to the original (distorted) frame
@@ -1232,7 +1287,11 @@ class StateMachine:
             jx = (fwd(base + np.array([eps, 0.0])) - b0) / eps
             jy = (fwd(base + np.array([0.0, eps])) - b0) / eps
             J = np.column_stack([jx, jy])
-            Dwh = np.diag([1280.0, 720.0])              # norm-image -> desnorm pixel
+            # norm-image -> desnorm pixel, using the ACTUAL world-frame size (the same one the
+            # mean is denormalised with in step()), not a hardcoded 1280x720: otherwise the
+            # covariance and its mean live in different pixel spaces on any non-720p video.
+            fw, fh = getattr(self, 'world_frame_wh', (1280.0, 720.0))
+            Dwh = np.diag([float(fw), float(fh)])
             cov_px = Dwh @ np.asarray(cov_img, float) @ Dwh
             nb = J @ cov_px @ J.T
             if not np.all(np.isfinite(nb)):
@@ -1774,8 +1833,7 @@ class StateMachine:
                             cov = pts[k].get('norm_board_cov')
                             if cov is not None:
                                 nb = pts[k]['norm_board_coord']
-                                masses.append(_cell_mass(nb[0], nb[1],
-                                                         max(cov[0][0], 1e-9) ** 0.5, max(cov[1][1], 1e-9) ** 0.5,
+                                masses.append(_cell_mass(nb[0], nb[1], cov,
                                                          target_colrow[0], target_colrow[1], ncols, nrows))
                         if masses:
                             mean_mass = sum(masses) / len(masses)
