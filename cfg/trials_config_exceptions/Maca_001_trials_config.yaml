@@ -1,0 +1,19 @@
+
+## All 6 blocks of trials  (Maca_001)
+# La participante se quedaba con los OJOS CERRADOS al presentarle la primera carta de varios
+# bloques, por lo que el operador tenía que RE-PRESENTAR esa carta. En el vídeo se ve la carta dos
+# veces seguidas: la 1ª (ojos cerrados, sin búsqueda válida) es el descarte, la 2ª es la búsqueda
+# real. Verificado en vídeo bloque a bloque. Afecta a la primera carta de los bloques 1, 3 y 4
+# (los bloques 0, 2 y 5 no tienen doble). Cada re-presentación se consume con un [-1, "<carta>"]
+# ANTES de su [0] (mismo patrón que 027/035/Vane); así [0] = la búsqueda real y no se desincroniza:
+#   - bloque 1: red_hexagon    (world.mp4 ~2:16 [-1]  /  ~2:27.9 real)
+#   - bloque 3: yellow_hexagon (world.mp4 ~4:47 [-1]  /  ~4:57.9 real)
+#   - bloque 4: red_circle     (world.mp4 ~7:04 [-1]  /  ~7:09.4 real)
+# Includes [block_id,[[trial_id, trial_name], ...]]
+test_block_list:
+ - [0, [[0, "yellow_circle"],   [1, "red_hexagon"],     [2, "green_triangle"], [3, "blue_circle"],    [4, "red_triangle"],   [5, "yellow_hexagon"],  [6, "blue_triangle"],  [7, "green_hexagon"],  [8, "yellow_triangle"], [9, "red_circle"]]]
+ - [1, [[-1, "red_hexagon"],    [0, "red_hexagon"],     [1, "yellow_triangle"], [2, "blue_circle"],   [3, "green_triangle"], [4, "yellow_circle"],   [5, "blue_triangle"],  [6, "red_circle"],     [7, "yellow_hexagon"],  [8, "red_triangle"],   [9, "green_hexagon"]]]
+ - [2, [[0, "red_circle"],      [1, "yellow_triangle"], [2, "green_hexagon"],  [3, "blue_triangle"],  [4, "yellow_hexagon"], [5, "red_triangle"],    [6, "blue_circle"],    [7, "green_triangle"], [8, "red_hexagon"],     [9, "yellow_circle"]]]
+ - [3, [[-1, "yellow_hexagon"], [0, "yellow_hexagon"],  [1, "red_triangle"],   [2, "yellow_circle"],  [3, "blue_triangle"],  [4, "red_hexagon"],     [5, "green_triangle"], [6, "blue_circle"],    [7, "green_hexagon"],   [8, "yellow_triangle"], [9, "red_circle"]]]
+ - [4, [[-1, "red_circle"],     [0, "red_circle"],      [1, "blue_triangle"],  [2, "yellow_circle"],  [3, "green_triangle"], [4, "red_hexagon"],     [5, "yellow_triangle"], [6, "blue_circle"],   [7, "green_hexagon"],   [8, "red_triangle"],   [9, "yellow_hexagon"]]]
+ - [5, [[0, "green_hexagon"],   [1, "red_triangle"],    [2, "yellow_hexagon"], [3, "red_circle"],     [4, "blue_triangle"],  [5, "yellow_circle"],   [6, "green_triangle"], [7, "blue_circle"],    [8, "yellow_triangle"], [9, "red_hexagon"]]]

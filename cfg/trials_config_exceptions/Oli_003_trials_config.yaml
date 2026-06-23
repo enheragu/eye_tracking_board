@@ -1,0 +1,18 @@
+
+## All 6 blocks of trials  (Oli_003)
+# Tres descartes documentados [-1] (verificados en vídeo, no son errores de detección nuestros):
+#  - bloque 0, t7 green_hexagon: NO se presentó (panel pegado/saltado); el detectado salta de
+#    blue_triangle (t6, world.mp4 ~1:17) a yellow_triangle (t8, ~1:20). Mismo caso que 027.
+#  - bloque 3, green_triangle (t5): la carta se RE-PRESENTA; queda apoyada en un lateral y se
+#    re-detecta con el tablero quieto en el atril (~6:12 y ~6:13 sin test); la búsqueda real
+#    empieza en la tercera presentacion (~6:17). Dos [-1] ANTES de [5] consumen las dos primeras.
+#  - bloque 4, t2 yellow_circle: la cámara se sale por completo del tablero (~7:41); el trial
+#    arranca pero acaba en transition_error por el vídeo -> se descarta.
+# Includes [block_id,[[trial_id, trial_name], ...]]
+test_block_list:
+ - [0, [[0, "yellow_circle"],  [1, "red_hexagon"],     [2, "green_triangle"], [3, "blue_circle"],    [4, "red_triangle"],   [5, "yellow_hexagon"],  [6, "blue_triangle"],  [-1, "green_hexagon"], [8, "yellow_triangle"], [9, "red_circle"]]]
+ - [1, [[0, "red_hexagon"],    [1, "yellow_triangle"], [2, "blue_circle"],    [3, "green_triangle"], [4, "yellow_circle"],  [5, "blue_triangle"],   [6, "red_circle"],     [7, "yellow_hexagon"], [8, "red_triangle"],    [9, "green_hexagon"]]]
+ - [2, [[0, "red_circle"],     [1, "yellow_triangle"], [2, "green_hexagon"],  [3, "blue_triangle"],  [4, "yellow_hexagon"], [5, "red_triangle"],    [6, "blue_circle"],    [7, "green_triangle"], [8, "red_hexagon"],     [9, "yellow_circle"]]]
+ - [3, [[0, "yellow_hexagon"], [1, "red_triangle"],    [2, "yellow_circle"],  [3, "blue_triangle"],  [4, "red_hexagon"],    [-1, "green_triangle"], [-1, "green_triangle"], [5, "green_triangle"], [6, "blue_circle"],     [7, "green_hexagon"],   [8, "yellow_triangle"], [9, "red_circle"]]]
+ - [4, [[0, "red_circle"],     [1, "blue_triangle"],   [-1, "yellow_circle"], [3, "green_triangle"], [4, "red_hexagon"],    [5, "yellow_triangle"], [6, "blue_circle"],    [7, "green_hexagon"],  [8, "red_triangle"],    [9, "yellow_hexagon"]]]
+ - [5, [[0, "green_hexagon"],  [1, "red_triangle"],    [2, "yellow_hexagon"], [3, "red_circle"],     [4, "blue_triangle"],  [5, "yellow_circle"],   [6, "green_triangle"], [7, "blue_circle"],    [8, "yellow_triangle"], [9, "red_hexagon"]]]
