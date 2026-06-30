@@ -167,8 +167,8 @@ Below is a summary of the key presentations and publications associated with the
 
 This processing pipeline is developed and maintained by **Enrique Heredia-Aguado**
 (<enrique.he.ag@gmail.com>) as part of an interdisciplinary collaboration at the Universidad
-Miguel Hernández (UMH), in coordination with the visual-search research team listed in the
-presentations above (M. Pilar Aivar, Victoria Plaza, Laura Cepero Amores and colleagues).
+Miguel Hernández (UMH), in coordination with **Laura Cepero Amores** predoctoral thesis as part of the visual-search research team from Universidad Autónoma de Madrid (UAM) listed in the
+presentations above (M. Pilar Aivar, Victoria Plaza, and colleagues).
 
 For questions about the code, the processed outputs, or reusing the pipeline, open an issue on
 the repository or contact the maintainer at the address above.
