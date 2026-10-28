@@ -1,5 +1,7 @@
 <h1>Uncertainty-aware gaze-to-cell mapping for mobile eye tracking of visual search on a physical board</h1>
 
+<p align="center"><a href="https://doi.org/10.5281/zenodo.23724999"><img src="https://zenodo.org/badge/DOI/10.5281/zenodo.23724999.svg" alt="DOI 10.5281/zenodo.23724999" /></a></p>
+
 ## Table of contents <!-- omit in toc -->
 - [Introduction](#introduction)
 - [Code description](#code-description)
@@ -7,6 +9,7 @@
   - [What it produces](#what-it-produces)
 - [Contributions and Dissemination](#contributions-and-dissemination)
 - [Contributors and Contact Information](#contributors-and-contact-information)
+- [How to cite](#how-to-cite)
 - [License](#license)
 
 ## Introduction
@@ -178,6 +181,14 @@ presentations above (M. Pilar Aivar, Victoria Plaza, and colleagues).
 
 For questions about the code, the processed outputs, or reusing the pipeline, open an issue on
 the repository or contact the maintainer at the address above.
+
+## How to cite
+
+If you use this software, please cite it: the metadata are in [`CITATION.cff`](CITATION.cff), and GitHub's
+*Cite this repository* button exports them as APA or BibTeX. The DOI
+[10.5281/zenodo.23724999](https://doi.org/10.5281/zenodo.23724999) always resolves to the latest release;
+each release also has its own DOI (v1.5.0: [10.5281/zenodo.23725000](https://doi.org/10.5281/zenodo.23725000)),
+which is the one to cite when reporting results obtained with that version.
 
 ## License
 

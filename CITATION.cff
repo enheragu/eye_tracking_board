@@ -1,7 +1,7 @@
 cff-version: 1.2.0
 message: "If you use this software, please cite it as below."
 type: software
-title: "eye_tracking_board: Uncertainty-aware gaze-to-cell mapping for mobile eye tracking of visual search on a physical board"
+title: "Uncertainty-aware gaze-to-cell mapping for mobile eye tracking of visual search on a physical board"
 abstract: >-
   Processing pipeline that converts Pupil Labs Core recordings of a physical
   visual search task (an 8x5 board of coloured pieces searched and touched by
@@ -31,4 +31,11 @@ keywords:
 version: 1.5.0
 date-released: 2026-10-28
 license: MIT
-# TBC: add `doi:` once Zenodo mints it.
+doi: 10.5281/zenodo.23724999
+identifiers:
+  - type: doi
+    value: 10.5281/zenodo.23724999
+    description: "Concept DOI: all versions, resolves to the latest release"
+  - type: doi
+    value: 10.5281/zenodo.23725000
+    description: "Version 1.5.0"
