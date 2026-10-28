@@ -1,4 +1,4 @@
-<h1>Data extraction from visual search experiments in natural environments</h1>
+<h1>Uncertainty-aware gaze-to-cell mapping for mobile eye tracking of visual search on a physical board</h1>
 
 ## Table of contents <!-- omit in toc -->
 - [Introduction](#introduction)
@@ -7,6 +7,7 @@
   - [What it produces](#what-it-produces)
 - [Contributions and Dissemination](#contributions-and-dissemination)
 - [Contributors and Contact Information](#contributors-and-contact-information)
+- [License](#license)
 
 ## Introduction
 
@@ -56,14 +57,14 @@ for how long. Documentation (Spanish):
   localization/homography, contour detection, touch detector, state machine, gaze drift
   correction, a **per-sample gaze uncertainty model** —each gaze as a covariance ellipse →
   probabilistic cell mapping and a graded `target_found_confidence`—, measured engineering findings).
-- **[Dataset characterization](docs/caracterizacion_dataset.md)** — the 22 recordings actually
+- **[Dataset characterization](docs/caracterizacion_dataset.md)** — the 32 recordings
   processed here: per-participant capture configuration (mapping model, eye, gaze rate,
   calibrations) and why they are heterogeneous.
 - **[Experimental-design recommendations](docs/recomendaciones_diseno_experimental.md)** — for the
   methodology team: what to change in a future recording to make processing more robust, each
   point grounded in a concrete case from this cohort.
 
-Version history is in the [CHANGELOG](CHANGELOG.md); the current version is **1.4.0**.
+Version history is in the [CHANGELOG](CHANGELOG.md); the current version is **1.5.0**.
 
 Repository layout:
 
@@ -102,6 +103,11 @@ Input and output locations default to an external data drive and can be overridd
 with `--data_root`/`--output_root` (or the `EEHA_DATA_ROOT`/`EEHA_OUTPUT_ROOT`
 environment variables). Outputs are stored under `OutputData_v<version>/<topic>/<id>/`
 so results of different software versions never mix.
+
+Per-participant files kept in this repository (`calibration/gaze/<id>.json`,
+`cfg/trials_config_exceptions/<id>_trials_config.yaml`) use anonymous codes (`P-A`, `P-B`, ...)
+for the recordings whose data folder carries the participant's name. The folder-to-code map is
+private: it is kept next to the data and never committed (`EEHA_PARTICIPANT_CODES` points to it).
 
 Slow/precise analysis is the **default**; `--fast_analysis` opts into a ~6.5× subsampled
 run that is only meant for quick iteration (it may miss marginally-detected trial starts).
@@ -172,3 +178,11 @@ presentations above (M. Pilar Aivar, Victoria Plaza, and colleagues).
 
 For questions about the code, the processed outputs, or reusing the pipeline, open an issue on
 the repository or contact the maintainer at the address above.
+
+## License
+
+The code in this repository is released under the [MIT License](LICENSE), with one exception:
+`src/core/deps/file_methods.py` is a verbatim copy of a module from
+[Pupil](https://github.com/pupil-labs/pupil) (Copyright (C) Pupil Labs), distributed under the GNU
+Lesser General Public License v3.0. Its license texts are included next to it
+(`src/core/deps/COPYING` and `src/core/deps/COPYING.LESSER`).

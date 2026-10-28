@@ -4,6 +4,52 @@ All notable changes to this project are documented in this file. Versions prior 
 1.0.0 were reconstructed from the git history. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [1.5.0](https://github.com/enheragu/eye_tracking_board/releases/tag/v1.5.0) - 2026-10-28
+
+Offline gaze re-mapping variants (`<id>_oc`), parallel gaze calibration and an online/offline filter
+in the comparative report, together with the calibration artifacts of the recordings added since
+v1.4.1, anonymous participant ids in the repository, and licensing and citation metadata. First
+release archived in Zenodo.
+
+The outputs labelled `OutputData_v1.4.1` come from two code states, as recorded in each output's
+`run_config`: 31 recordings (22-26 June 2026) were processed with v1.4.1 and the participant additions
+of 23 June, and six outputs (`008_1` and the five `_oc` variants, 30 June-1 July 2026) with the changes
+released here, before their release. The calibration values are the same in both cases: re-running the
+gaze calibration only refreshed the fingerprint of the existing artifacts.
+
+### Added
+- **Offline gaze re-mapping variants (`<id>_oc`).** A participant id ending in `_oc` reads its input
+  from the base `<id>` folder and uses the gaze re-mapped offline in Pupil Player
+  (`offline_data/gaze-mappings/`) instead of the online gaze. Outputs and calibration artifacts are keyed
+  by the full id, so both variants of a recording can be compared; the trials exception is shared with
+  the base recording. `participant_input_spec` and `resolve_eye_source` (`src/core/utils.py`) implement
+  the convention for both processing and gaze calibration.
+- **Parallel gaze calibration.** `gaze_calibration.py` calibrates several participants at once (`-j`, one
+  process per video) with a bounded number of OpenCV threads per job (`--cv-threads`), and isolates
+  per-participant errors so one bad recording does not stop the batch.
+- **Online/offline filter in the comparative report.** Every per-participant view can show the online
+  recordings, the offline (`_oc`) variants or both; "Mejor por participante" keeps, for each recording
+  with both variants, the one with the higher coverage, since the offline re-mapping is not always better.
+- **Calibration artifacts and trials exception for the recordings added since v1.4.1** (`008_1`, `013`,
+  `015`, `060`, `063` and the `_oc` variants of `001`, `002`, `008_1`, `013` and `015`).
+- **Licensing and citation metadata.** MIT `LICENSE`, with the GNU GPL/LGPL v3 texts next to the vendored
+  Pupil Labs module (`src/core/deps/file_methods.py`, LGPL-3.0), and `CITATION.cff`.
+
+### Changed
+- **`-o/--use_offline_data` replaced by the `_oc` suffix.** Offline gaze is now selected per recording
+  through its id, so online and offline runs of the same recording coexist in one output tree.
+- **Calibration artifacts refreshed.** The existing `calibration/gaze/<id>.json` were re-generated with the
+  current calibration code; only their fingerprint changed, all measured values are identical.
+- **Documentation.** The dataset characterization covers the 32-participant cohort and compares online and
+  offline re-mapping per recording.
+- **Anonymous participant ids in the repository.** Per-participant files whose name carried a
+  participant's name (`calibration/gaze/<id>.json`, `cfg/trials_config_exceptions/<id>_trials_config.yaml`
+  and comments referring to them) now use the anonymous codes of the documentation (`P-A` to `P-G`).
+  `public_participant_id` (`src/core/utils.py`) translates a data folder to its code through a private
+  map kept next to the data and never committed (`EEHA_PARTICIPANT_CODES`), and is used wherever those
+  files are read or written. Processing is unchanged: the calibration fingerprint is identical, since the
+  functions it covers are untouched (`gaze_calibration.py` re-keys the artifact in its worker instead).
+
 ## [1.4.1](https://github.com/enheragu/eye_tracking_board/releases/tag/v1.4.1) - 2026-06-22
 
 Corrects a systematic cell-grid misalignment that affected gaze→cell assignment and the touch

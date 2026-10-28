@@ -1,0 +1,110 @@
+{
+  "participant": "060",
+  "apply": true,
+  "calib_segment_times": [
+    -12.389
+  ],
+  "panel_offsets": [
+    {
+      "t": 9.801,
+      "off_x": 0.01007,
+      "off_y": 0.002069,
+      "seg": 0,
+      "n_dots": 9
+    },
+    {
+      "t": 80.67,
+      "off_x": 0.012036,
+      "off_y": -0.026434,
+      "seg": 0,
+      "n_dots": 9
+    },
+    {
+      "t": 151.79,
+      "off_x": 0.01286,
+      "off_y": -0.045347,
+      "seg": 0,
+      "n_dots": 9
+    },
+    {
+      "t": 221.904,
+      "off_x": 0.017159,
+      "off_y": -0.0659,
+      "seg": 0,
+      "n_dots": 7
+    },
+    {
+      "t": 294.281,
+      "off_x": 0.016402,
+      "off_y": -0.073696,
+      "seg": 0,
+      "n_dots": 5
+    },
+    {
+      "t": 355.851,
+      "off_x": 0.011362,
+      "off_y": -0.068827,
+      "seg": 0,
+      "n_dots": 5
+    }
+  ],
+  "stats": {
+    "base_px": 41.28,
+    "corr_px": 13.7,
+    "gain": 0.668,
+    "gain_lo": 0.404,
+    "gain_hi": 0.747,
+    "n_points": 44
+  },
+  "uncertainty": {
+    "jitter_cov_px": {
+      "sigma_major": 14.75,
+      "sigma_minor": 11.95,
+      "angle_deg": 85.5
+    },
+    "conf_var_factor": {
+      "conf": [
+        0.675,
+        0.8,
+        0.89,
+        0.955,
+        0.995
+      ],
+      "factor": [
+        3.408,
+        0.938,
+        0.76,
+        0.76,
+        0.76
+      ]
+    },
+    "spatial_var_factor": {
+      "model": "radial_ecc_px",
+      "ecc": [
+        117.0,
+        232.2,
+        325.4
+      ],
+      "factor": [
+        0.74,
+        1.124,
+        1.063
+      ]
+    },
+    "jitter_rms_px": 18.98,
+    "n_samples": 7799,
+    "units": "image px (1280x720); Sigma_meas = jitter_cov * conf_var_factor(conf) * spatial_var_factor(ecc)",
+    "bias_cov_px": [
+      [
+        245.72090608675336,
+        -68.48529304615607
+      ],
+      [
+        -68.48529304615607,
+        201.07492631888564
+      ]
+    ]
+  },
+  "fingerprint": "c8535194111f",
+  "units": "normalized image coords, origin top-left; subtract off from [x, 1-y]"
+}

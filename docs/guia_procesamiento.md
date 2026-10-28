@@ -75,7 +75,10 @@ define en `default_trials_config.yaml` (ahí está la versión textual, lista pa
 `block_index` / `trial_index`). Aquí se muestra con el dibujo del estímulo que se enseña al
 participante. Las filas son los *blocks* (0–5) y las columnas los *trials* (0–9), igual que en
 los CSV. Algunos participantes tienen su propia variante en `cfg/trials_config_exceptions/`; en
-ese caso manda la suya.
+ese caso manda la suya. Los participantes cuya carpeta de datos lleva su nombre aparecen en el
+repositorio con un código anónimo (`P-A`, `P-B`…), tanto aquí como en `calibration/gaze/`; la tabla
+carpeta → código es privada, se guarda junto a los datos y nunca se versiona
+(`EEHA_PARTICIPANT_CODES`).
 
 | Block \ Trial | 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 |
 |---|---|---|---|---|---|---|---|---|---|---|
@@ -295,6 +298,15 @@ Todo se guarda en `<output_root>/<topic>/<id>/` (por ejemplo `OutputData_v<versi
 | `data_<id>.yaml` | Todos los datos en formato legible por humanos. |
 | `data_<id>.pkl` | Los mismos datos, en formato para volver a cargarlos rápido desde Python. |
 | `result_log_<id>.txt` | Un informe de texto con tablas-resumen (reparto de tiempo y de miradas, y una tabla por *trial*). |
+
+> **Sufijo `_oc` (offline calibration).** El `<id>` —de la carpeta de salida y de la columna
+> `participant` en los CSV combinados— puede llevar el sufijo **`_oc`**: es el **mismo participante
+> reprocesado con su calibración de gaze OFFLINE** (re-mapeo de Pupil Player en `offline_data/`), no
+> una toma distinta. El id plano (`<id>`) usa el gaze online de la captura; `<id>_oc` lee la misma
+> carpeta `InputData/<id>/` pero usa el gaze offline. Se generan ambos para poder **comparar online
+> vs offline** y quedarse con el mejor sin perder información. Para producir la variante basta pedir
+> el id con sufijo: `python3 src/run_all.py -p 008_1_oc` (o `-p 008_1 008_1_oc` para las dos). Solo
+> tiene sentido si existe el re-mapeo offline del participante; si no, el `_oc` cae al gaze online.
 | `debug_<id>.mp4` | (Solo si se activa la visualización) Vídeo de comprobación con todo dibujado encima. |
 
 Y, una sola vez por lote (en la carpeta de salida, no por participante), generados por `src/tools/process_outputs.py`:

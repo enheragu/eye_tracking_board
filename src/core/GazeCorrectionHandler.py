@@ -4,7 +4,7 @@ import json
 
 import numpy as np
 
-from src.core.utils import log
+from src.core.utils import log, public_participant_id
 
 
 class GazeCorrectionHandler:
@@ -35,7 +35,7 @@ class GazeCorrectionHandler:
         if calib_dir is None:
             repo_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
             calib_dir = os.path.join(repo_root, "calibration", "gaze")
-        path = os.path.join(calib_dir, f"{participant_id}.json")
+        path = os.path.join(calib_dir, f"{public_participant_id(participant_id)}.json")
 
         if not os.path.isfile(path):
             log(f"[GazeCorrectionHandler] {participant_id}: no artifact at {path} -> identity")
@@ -127,7 +127,7 @@ class GazeUncertaintyModel:
         if calib_dir is None:
             repo_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
             calib_dir = os.path.join(repo_root, "calibration", "gaze")
-        path = os.path.join(calib_dir, f"{participant_id}.json")
+        path = os.path.join(calib_dir, f"{public_participant_id(participant_id)}.json")
         if not os.path.isfile(path):
             return
         try:

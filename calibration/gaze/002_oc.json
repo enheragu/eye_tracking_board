@@ -1,0 +1,114 @@
+{
+  "participant": "002_oc",
+  "apply": false,
+  "calib_segment_times": [
+    -9.236,
+    35.503,
+    141.373,
+    168.747,
+    346.657
+  ],
+  "panel_offsets": [
+    {
+      "t": 22.414,
+      "off_x": -0.000547,
+      "off_y": 0.003854,
+      "seg": 0,
+      "n_dots": 9
+    },
+    {
+      "t": 134.735,
+      "off_x": 0.002815,
+      "off_y": 0.023219,
+      "seg": 1,
+      "n_dots": 8
+    },
+    {
+      "t": 231.442,
+      "off_x": -0.010812,
+      "off_y": 0.028052,
+      "seg": 3,
+      "n_dots": 7
+    },
+    {
+      "t": 333.438,
+      "off_x": 0.00256,
+      "off_y": 0.041883,
+      "seg": 3,
+      "n_dots": 8
+    },
+    {
+      "t": 451.551,
+      "off_x": -0.004505,
+      "off_y": 0.026619,
+      "seg": 4,
+      "n_dots": 6
+    },
+    {
+      "t": 523.326,
+      "off_x": 0.007208,
+      "off_y": 0.018094,
+      "seg": 4,
+      "n_dots": 7
+    }
+  ],
+  "stats": {
+    "base_px": 46.03,
+    "corr_px": 45.33,
+    "gain": 0.015,
+    "gain_lo": -0.076,
+    "gain_hi": 0.162,
+    "n_points": 45
+  },
+  "uncertainty": {
+    "jitter_cov_px": {
+      "sigma_major": 19.35,
+      "sigma_minor": 15.91,
+      "angle_deg": -148.9
+    },
+    "conf_var_factor": {
+      "conf": [
+        0.675,
+        0.8,
+        0.89,
+        0.955,
+        0.995
+      ],
+      "factor": [
+        0.894,
+        0.894,
+        0.894,
+        0.894,
+        0.894
+      ]
+    },
+    "spatial_var_factor": {
+      "model": "radial_ecc_px",
+      "ecc": [
+        120.5,
+        251.1,
+        371.5
+      ],
+      "factor": [
+        0.847,
+        1.097,
+        1.247
+      ]
+    },
+    "jitter_rms_px": 25.05,
+    "n_samples": 11231,
+    "units": "image px (1280x720); Sigma_meas = jitter_cov * conf_var_factor(conf) * spatial_var_factor(ecc)",
+    "bias_cov_px": [
+      [
+        1040.641249553335,
+        -184.7401377134041
+      ],
+      [
+        -184.7401377134041,
+        1333.3894979839904
+      ]
+    ]
+  },
+  "fingerprint": "c8535194111f",
+  "units": "normalized image coords, origin top-left; subtract off from [x, 1-y]"
+}

@@ -107,6 +107,6 @@
       ]
     ]
   },
-  "fingerprint": "44095fb34483",
+  "fingerprint": "c8535194111f",
   "units": "normalized image coords, origin top-left; subtract off from [x, 1-y]"
 }

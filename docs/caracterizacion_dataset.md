@@ -1,4 +1,4 @@
-# Caracterización del dataset (27 participantes)
+# Caracterización del dataset (32 participantes)
 
 Este documento describe **los datos concretos** procesados por este repositorio: quién es cada
 registro y con qué configuración de captura se grabó. Es complementario, no redundante, con los
@@ -27,7 +27,7 @@ heterogeneidad condiciona cualquier análisis posterior.
 ## 1. Equipo y captura
 
 - **Dispositivo:** Pupil Labs **Core** (Kassner, Patera & Bulling, 2014).
-- **Software de grabación:** **Pupil Capture 3.5.7** (los 27 registros).
+- **Software de grabación:** **Pupil Capture 3.5.7** (los 32 registros).
 - **Cámaras oculares:** 200 Hz nominal, 192×192 px, técnica de pupila oscura sobre imagen IR.
 - **Cámara de escena (*World*):** **1280×720** en estas grabaciones (hasta 1080p/30 Hz nominal).
 - **Convención de ojos de Pupil** (corroborada en el código del *gazer* 2D): `id 0` = ojo
@@ -41,13 +41,21 @@ Medido directamente sobre los `.pldata`/`.npy` de entrada (`gaze.pldata`, `notif
 | Participante | Modelo de mapeo | Ojo(s) registrados | Gaze efectivo (Hz) | Nº calibraciones |
 |---|---|---|---:|---:|
 | 001     | 3D    | mono izq        | 124 | 4 |
+| 001_oc  | 3D † | mono izq        | 124 | 4 |
 | 002     | 3D    | mono izq        | 124 | 5 |
+| 002_oc  | 3D † | mono izq        | 124 | 5 |
 | 007     | 2D    | binocular (61 %) | 248 | 3 |
 | 007_1   | 3D    | mono izq        | 124 | 2 |
 | 008     | 3D    | mono izq        | 124 | 3 |
+| 008_1   | 3D    | mono izq        | 124 | 3 |
+| 008_1_oc | 2D † | mono izq        | 124 | 3 |
 | 009     | 2D    | binocular (61 %) | 248 | 2 |
 | 011     | 2D    | binocular*      | 124 | 3 |
 | 012     | 2D    | mono izq        | 124 | 1 |
+| 013     | 3D    | mono izq        | 124 | 5 |
+| 013_oc  | 2D † | mono izq        | 124 | 5 |
+| 015     | 3D    | mono izq        | 124 | 2 |
+| 015_oc  | 2D † | mono izq        | 124 | 2 |
 | 024     | 3D    | mono izq        | 124 | 3 |
 | 027     | 2D+3D | mono izq        | 124 | 2 |
 | 032     | 2D    | mono izq        | 124 | 2 |
@@ -59,6 +67,8 @@ Medido directamente sobre los `.pldata`/`.npy` de entrada (`gaze.pldata`, `notif
 | 054     | 2D    | mono der        | 124 | 5 |
 | 055     | 2D    | mono izq        | 124 | 1 |
 | 058     | 2D    | mono izq        | 124 | 4 |
+| 060     | 2D    | mono izq        | 124 | 1 |
+| 063     | 2D    | mono izq        | 124 | 1 |
 | 064     | 2D    | mono izq        | 124 | 1 |
 | P-B     | 2D    | binocular (72 %) | 248 | 3 |
 | P-A     | 2D    | mono izq        | 124 | 1 |
@@ -73,9 +83,18 @@ Medido directamente sobre los `.pldata`/`.npy` de entrada (`gaze.pldata`, `notif
 (~124 Hz). El porcentaje en las filas binoculares indica la fracción de muestras efectivamente
 binoculares; el resto se registra como monocular cuando solo se detecta un ojo.
 
+† Las filas con sufijo **`_oc`** (offline calibration) son el **mismo participante reprocesado con
+su re-mapeo de gaze OFFLINE** (Pupil Player), no una toma distinta. El pipeline las genera
+con el id `<base>_oc` (sufijo `_oc` → carpeta de entrada `<base>` + gaze offline; ver §5 y
+[guia_procesamiento.md](guia_procesamiento.md)). Aquí hay cinco: 008_1, 013, 001, 002 y 015; sus
+filas `_oc` comparten captura con la base (misma toma, mismas calibraciones online) y solo cambian
+el gaze —en 008_1, 013 y 015 el re-mapeo es a **2D**, en 001 y 002 sigue en 3D— y la calidad
+resultante (§6/§7). Quedan fuera de los conteos agregados (§3) y del total/correlaciones (§7) por
+ser la misma toma.
+
 ## 3. Resumen de heterogeneidad
 
-- **Modelo de mapeo:** 17 participantes en 2D monocular, 5 en 3D monocular, 4 con
+- **Modelo de mapeo:** 19 participantes en 2D monocular, 8 en 3D monocular, 4 con
   calibración 2D binocular, 1 mixto 2D/3D (027). El 2D es más preciso en condiciones ideales
   (<1°) pero más sensible al deslizamiento; el 3D es más robusto pero menos exacto (1,5–2,5°); el
   monocular pierde la convergencia binocular. La mirada de un binocular 2D no es directamente
@@ -87,16 +106,16 @@ binoculares; el resto se registra como monocular cuando solo se detecta un ojo.
   intercala las corrientes de ambos ojos). Es menor que los 200 Hz nominales de la cámara ocular;
   *hipótesis*: filtrado por confianza (≤0,6 descartado) y emparejamiento pupila→gaze reducen la tasa
   registrada. No está medida la causa, solo la tasa resultante.
-- **Número de calibraciones (1–6):** distribución sobre los 27 registros — 1 calib.: 8 part.;
-  2: 6; 3: 6; 4: 3; 5: 3; 6: 1.
+- **Número de calibraciones (1–6):** distribución sobre los 32 registros — 1 calib.: 10 part.;
+  2: 7; 3: 7; 4: 3; 5: 4; 6: 1.
 
   | Nº calibraciones | Participantes |
   |---|---|
-  | 1 | 012, 035, 042, 044, 049, 055, 064, P-A |
-  | 2 | 007_1, 009, 027, 032, P-D, P-F |
-  | 3 | 007, 008, 011, 024, 051, P-B |
+  | 1 | 012, 035, 042, 044, 049, 055, 060, 063, 064, P-A |
+  | 2 | 007_1, 009, 015, 027, 032, P-D, P-F |
+  | 3 | 007, 008, 008_1, 011, 024, 051, P-B |
   | 4 | 001, 058, P-G |
-  | 5 | 002, 054, P-C |
+  | 5 | 002, 013, 054, P-C |
   | 6 | P-E |
 
   Cuando hay varias, el gaze grabado usa la más reciente en cada instante (en Pupil 3.5 cada
@@ -117,7 +136,7 @@ fueron:
 - El modelo 3D presentó dificultades en varios participantes, lo que explica su carácter
   minoritario en el conjunto final.
 - Algunos participantes presentaron dificultades de calibración pese a varios intentos, lo que
-  explica la variabilidad en el número de calibraciones (de 1 a 6) y los ocho registros con una
+  explica la variabilidad en el número de calibraciones (de 1 a 6) y los diez registros con una
   sola.
 - En los registros más tardíos se empleó directamente la configuración 2D, coherente con
   que los participantes de numeración más alta sean mayoritariamente 2D.
@@ -125,9 +144,10 @@ fueron:
   documentan como descartes `[-1]` en el `trials_config_exceptions/<id>.yaml` del participante (no
   son fallos de detección y quedan fuera del recuento de trials): una carta mostrada pero no buscada
   porque el participante **cerraba los ojos** y había que re-presentarla (P-C, en los bloques 1, 3
-  y 4), una carta **no presentada** en la toma (P-D bloque 3, P-E bloque 0), o la **cámara
-  saliéndose del tablero** durante un trial (P-E bloque 4). Cada caso está verificado en el vídeo y
-  anotado con su motivo y su marca de tiempo en el fichero de excepción.
+  y 4), una carta **detectada dos veces** porque se ve un instante al experimentador al no taparla
+  bien (015 bloque 4), una carta **no presentada** en la toma (P-D bloque 3, P-E bloque 0), o la
+  **cámara saliéndose del tablero** durante un trial (P-E bloque 4). Cada caso está verificado en el
+  vídeo y anotado con su motivo y su marca de tiempo en el fichero de excepción.
 
 Estos factores reflejan las limitaciones prácticas del equipo y del protocolo disponible en el
 momento de la toma. Se documentan porque condicionan la comparabilidad entre participantes y
@@ -143,6 +163,35 @@ coincide con el grabado a 0,00 px sobre 36 527 muestras. Esto habilita el cálcu
 offline propio para la compensación de error por participante (ver
 [recomendaciones_diseno_experimental.md](recomendaciones_diseno_experimental.md)).
 
+Cuando una grabación incluye un **re-mapeo de gaze offline** hecho en Pupil Player
+(`offline_data/gaze-mappings/<nombre>-<uuid>.pldata`), se procesa **además** como variante con el id
+`<base>_oc` (offline calibration): el sufijo `_oc` indica al pipeline que lea la carpeta de entrada
+`<base>` y use el gaze offline en vez del online (el id plano sigue siendo el online). Así el equipo
+de análisis tiene **las dos versiones** —online y offline— para comparar y quedarse con la mejor, sin
+perder información. Detalle de ejecución en [guia_procesamiento.md](guia_procesamiento.md).
+
+En este conjunto hay **cinco**: 008_1, 013, 001, 002 y 015. El resultado depende de si el re-mapeo
+produce una calibración realmente mejor, no del hecho de ser offline:
+
+| Participante | Re-mapeo | online (base) | offline (`_oc`) |
+|---|---|---|---|
+| 008_1 | 3D→2D | 50 % · 25,6 · 32,4 | **98 % · 10,7 · 8,9** |
+| 013   | 3D→2D | 68 % · 26,6 · 32,2 | **100 % · 14,3 · 17,0** |
+| 001   | 3D→3D | 63 % · 31,6 · 44,2 | 48 % · 31,3 · 41,1 |
+| 002   | 3D→3D | 55 % · 28,2 · 34,7 | 43 % · 34,5 · 46,0 |
+| 015   | 3D→2D | 69 % · 27,0 · 47,8 | 49 % · 27,6 · 35,3 |
+
+(cada celda: cobertura «objetivo visto» · `bias_rms` px · `base_px` px)
+
+Solo **008_1** y **013** mejoran: su offline re-mapea de 3D a **2D** con residual bajo (exactitud
+0,1–0,2°), reduce mucho la elipse y dispara la cobertura. En **001** y **002** el offline sigue siendo
+**3D** (no mejora la calibración) y en **015** el 2D offline no baja el error; en los tres la cobertura
+y la `med_conf` caen respecto al online. Es la misma toma y la misma búsqueda: cambia solo la calidad
+de la calibración, lo que confirma que la cobertura de §7 la determina la calidad de mirada y no la
+búsqueda del participante. Por eso el `_oc` se conserva junto al online —para comparar y quedarse con
+el mejor— pero **no** se cuenta en los agregados de §3/§7 (es la misma toma); el informe HTML permite
+filtrar online/offline y marca el mejor por participante.
+
 ## 6. Corrección de deriva de mirada: ganancias por participante
 
 La etapa de corrección de deriva (mecanismo en [documentacion_tecnica.md §7](documentacion_tecnica.md))
@@ -150,12 +199,14 @@ recupera las recalibraciones no registradas desde los paneles del vídeo y mide,
 reducción de error fuera de muestra (CV *leave-one-panel-out*, mediana en píxeles de imagen). La
 compuerta adopta la corrección solo si la ganancia es fiablemente positiva (el límite inferior,
 percentil 5 por *bootstrap*, es > 0) y el error base es relevante (≥12 px); si no, identidad.
-Resultado sobre los 27 (artefactos en `calibration/gaze/`):
+Resultado sobre los 32 (artefactos en `calibration/gaze/`):
 
 | Participante | nº cal | base→corr (px) | ganancia | IC inf. | `apply` |
 |---|---|---:|---:|---:|:--:|
 | 044 | 1 | 47.0 → 13.2 | **+72 %** | +58 % | ✅ |
+| 060 | 1 | 41.3 → 13.7 | **+67 %** | +40 % | ✅ |
 | P-A | 1 | 31.4 → 13.2 | **+58 %** | +46 % | ✅ |
+| 015 | 2 | 47.8 → 26.9 | **+44 %** | +34 % | ✅ |
 | 009 | 2 | 47.8 → 28.8 | +40 % | +16 % | ✅ |
 | 054 | 5 | 34.9 → 21.7 | +38 % | +17 % | ✅ |
 | 055 | 1 | 26.4 → 17.7 | +33 % | +18 % | ✅ |
@@ -166,14 +217,25 @@ Resultado sobre los 27 (artefactos en `calibration/gaze/`):
 | 011 | 3 | 30.8 → 23.9 | +23 % | +2 % | ✅ |
 | P-F, P-G | 2, 4 | — | +23…+28 % | <0 | — |
 | 012, 035, 051, 049 | 1–3 | — | +10…+15 % | <0 | — |
-| 024, 027, 002, 001, 008, P-B | — | — | +1…+6 % | <0 | — |
-| 042, 007, 007_1, 058, P-C | — | — | −2…−37 % | <0 | — |
+| 024, 027, 002, 001, 008, P-B, 013 | — | — | +1…+8 % | <0 | — |
+| 042, 063, 007, 008_1, 007_1, 058, P-C | — | — | −2…−37 % | <0 | — |
+| 015_oc | 2 | 35.3 → 33.6 | +5 % | −29 % | — |
+| 002_oc | 5 | 46.0 → 45.3 | +2 % | −8 % | — |
+| 001_oc | 4 | 41.1 → 42.4 | −3 % | −21 % | — |
+| 013_oc | 5 | 17.0 → 17.8 | −5 % | −16 % | — |
+| 008_1_oc | 3 | 8.9 → 14.7 | −64 % | −86 % | — |
 
-**Lectura:** 10 participantes reciben una corrección clara (varios >30 %, hasta +72 %), la mayoría
+**Lectura:** 12 participantes reciben una corrección clara (varios >30 %, hasta +72 %), la mayoría
 de pocas calibraciones —los que Pupil nunca reseteó—. El resto queda en identidad: tanto
 los claramente perjudicados (058 −37 %) como los positivos pero inciertos (la CV con 6 paneles
 tiene varianza alta, su IC inferior cae por debajo de 0). La compuerta corrige los errores sólidos
-(IC inferior > 0) y deja identidad en lo dudoso: nunca arriesga empeorar a nadie.
+(IC inferior > 0) y deja identidad en lo dudoso: nunca arriesga empeorar a nadie. Caso aparte son
+las variantes **`_oc`** (postcalibración offline, §2†, §5). En **008_1_oc** (base 8,9 px, por debajo
+del umbral de 12 px → no se corrige) y **013_oc** (17,0 px) el error base ya es bajo de partida, así
+que su ganancia negativa solo refleja que cualquier ajuste empeoraría una calibración ya buena, no un
+perjuicio real. En **001_oc**, **002_oc** y **015_oc** el error base sí es alto (35–46 px), pero su CV
+no da una ganancia fiablemente positiva (IC inferior < 0), por lo que la compuerta deja identidad igual
+que en el resto del cohorte: su re-mapeo offline no mejora a la versión online (§5).
 
 ## 7. Calidad de mirada y cobertura de objetivo visto por modo de adquisición
 
@@ -188,17 +250,28 @@ indica necesariamente peor búsqueda: con baja calidad de mirada no puede afirma
 el participante mirara la casilla exacta.
 
 Medido sobre el procesado **v1.4.1** (`frame_target_found` a umbral 0,34) y los artefactos de
-`calibration/gaze/`, ordenado por cobertura. Los descartes `[-1]` documentados (§4) quedan fuera
-del denominador (no son *trials* reales):
+`calibration/gaze/`, ordenado por cobertura del participante base; cada variante `_oc` se lista
+inmediatamente **bajo su base** para comparar online↔offline. Los descartes `[-1]` documentados (§4) quedan fuera
+del denominador (no son *trials* reales). Las filas con sufijo **`_oc`** son el mismo participante
+reprocesado con su **calibración offline** (postcalibración; ver §5): se muestran para comparar pero
+quedan **fuera del total de cohorte y de las correlaciones** (es la misma toma):
 
 | Participante | Modo | Objetivo visto | Cobertura | `bias_rms` (px) | jitter σ (px) | `med_conf` |
 |---|---|---:|---:|---:|---:|---:|
 | P-G | 2D    | 24/60 | 40 %  | 22.6 | 23.7 | 0.28 |
 | 008   | 3D    | 22/49 | 45 %  | 29.7 | 17.9 | 0.22 |
+| 008_1 | 3D    | 30/60 | 50 %  | 25.6 | 21.9 | 0.37 |
+| 008_1_oc | 2D | 59/60 | 98 %  | 10.7 | 10.7 | 0.97 |
 | 011   | 2D    | 28/53 | 53 %  | 19.8 | 16.8 | 0.40 |
 | 002   | 3D    | 33/60 | 55 %  | 28.2 | 21.1 | 0.42 |
+| 002_oc | 3D | 26/60 | 43 %  | 34.5 | 19.4 | 0.32 |
 | 009   | 2D    | 34/59 | 58 %  | 25.7 | 24.5 | 0.39 |
 | 001   | 3D    | 38/60 | 63 %  | 31.6 | 19.8 | 0.37 |
+| 001_oc | 3D | 29/60 | 48 %  | 31.3 | 22.0 | 0.32 |
+| 013   | 3D    | 41/60 | 68 %  | 26.6 | 21.4 | 0.47 |
+| 013_oc | 2D | 60/60 | 100 % | 14.3 | 17.3 | 0.79 |
+| 015   | 3D    | 41/59 | 69 %  | 27.0 | 20.0 | 0.43 |
+| 015_oc | 2D | 29/59 | 49 %  | 27.6 | 19.4 | 0.29 |
 | P-E | 2D    | 41/58 | 71 %  | 18.2 | 24.3 | 0.59 |
 | 058   | 2D    | 44/60 | 73 %  | 20.6 | 23.0 | 0.58 |
 | P-C | 2D    | 45/60 | 75 %  | 21.7 | 18.5 | 0.61 |
@@ -212,25 +285,27 @@ del denominador (no son *trials* reales):
 | P-F | 2D    | 55/60 | 92 %  | 26.1 | 20.3 | 0.63 |
 | 007   | 2D    | 55/59 | 93 %  | 23.7 | 20.5 | 0.61 |
 | 012   | 2D    | 56/60 | 93 %  | 24.0 | 13.8 | 0.67 |
+| 060   | 2D    | 56/60 | 93 %  | 14.9 | 14.8 | 0.80 |
 | 044   | 2D    | 47/50 | 94 %  | 14.5 | 19.4 | 0.76 |
 | 064   | 2D    | 56/59 | 95 %  | 12.7 |  7.9 | 0.90 |
 | 032   | 2D    | 57/59 | 97 %  | 15.4 | 12.2 | 0.83 |
+| 063   | 2D    | 58/60 | 97 %  | 21.8 | 10.2 | 0.72 |
 | 055   | 2D    | 55/56 | 98 %  | 15.9 | 17.7 | 0.88 |
 | P-B   | 2D    | 59/60 | 98 %  | 18.4 | 17.3 | 0.80 |
 | 027   | 2D+3D | 59/59 | 100 % | 19.8 | 11.6 | 0.83 |
 | 049   | 2D    | 58/58 | 100 % | 12.2 | 11.2 | 0.96 |
 | P-A   | 2D    | 60/60 | 100 % | 14.9 |  9.4 | 0.90 |
 
-(total cohorte: **1280/1570 = 82 %**.)
+(total cohorte, sin las variantes `_oc`: **1506/1869 = 81 %**.)
 
-**La cobertura la determina el tamaño de la elipse, no el modo en sí.** Correlaciones sobre los 27:
+**La cobertura la determina el tamaño de la elipse, no el modo en sí.** Correlaciones sobre los 32 (sin `_oc`):
 
 | factor | correlación con cobertura |
 |---|---:|
 | `med_conf` (mediana de la masa de la mejor fijación del *trial*) | **+0,92** |
-| `bias_rms` (exactitud/deriva, px) | −0,56 |
-| jitter σ (px) | −0,59 |
-| `base_px` (residual de calibración, §6) | −0,45 |
+| `bias_rms` (exactitud/deriva, px) | −0,59 |
+| jitter σ (px) | −0,64 |
+| `base_px` (residual de calibración, §6) | −0,43 |
 
 La cobertura está **casi determinada** (`med_conf` r=+0,92) por lo concentrada que es la elipse de
 cada participante: elipse pequeña → masa concentrada en la casilla → supera el umbral.
@@ -239,14 +314,17 @@ cada participante: elipse pequeña → masa concentrada en la casilla → supera
 
 | grupo | n | cobertura media | `bias_rms` medio |
 |---|---:|---:|---:|
-| **3D** | 5 | **67 %** | 28.6 px |
-| **2D** | 21 | **84 %** | 19.4 px |
+| **3D** | 8 | **65 %** | 27.8 px |
+| **2D** | 23 | **85 %** | 19.4 px |
 
-Los 5 participantes mapeados en **3D** (001, 002, 007_1, 008, 024) concentran las coberturas más
-bajas: su elipse de exactitud/deriva es mayor (28.6 vs 19.4 px de media). Coherente con que el 3D
+Los 8 participantes mapeados en **3D** (001, 002, 007_1, 008, 008_1, 013, 015, 024) concentran las
+coberturas más bajas: su elipse de exactitud/deriva es mayor (27.8 vs 19.4 px de media). Coherente con que el 3D
 monocular sea menos exacto (§3) y con las dificultades de ajuste del modelo 3D reportadas en la toma
-(§4). El **ojo registrado y el carácter mono/binocular** (detallados por participante en §2) no
-añaden poder explicativo: la media de los registros monoculares (~81 %) y de los binoculares
+(§4). Las **variantes `_oc`** lo ilustran de forma directa: **008_1** en 3D da 50 % de cobertura (elipse
+25,6 px), pero su postcalibración offline en 2D (**008_1_oc**, §5) baja la elipse a 10,7 px y sube la
+cobertura a **98 %**; **013** pasa de 68 % a **100 %** (**013_oc**, elipse 26,6 → 14,3 px). Mismo
+participante y misma búsqueda: solo cambia la calidad de la calibración. El **ojo registrado y el carácter mono/binocular** (detallados por participante en §2) no
+añaden poder explicativo: la media de los registros monoculares (~80 %) y de los binoculares
 (~83 %) es prácticamente la misma, y con solo 3 registros binoculares (007, 009, P-B) el contraste
 mono/binocular no es concluyente; el factor asociado a la cobertura es el modo de mapeo y, sobre
 todo, el tamaño de la elipse.
@@ -260,9 +338,9 @@ de modo que «ojos claros/oscuros» no es un factor medible aquí. El **color de
 (p. ej. 008 ≈ 0,43) apunta a peor calidad de imagen ocular, pero su causa (iluminación,
 pestañas/maquillaje, deslizamiento, fisiología) no puede aislarse con el material disponible.
 
-**Cautelas.** (1) n pequeño —5 registros en 3D— ⇒ es una **asociación**, no una causa aislada: el
+**Cautelas.** (1) n pequeño —8 registros en 3D— ⇒ es una **asociación**, no una causa aislada: el
 3D va confundido con la dificultad de calibración (§4). (2) La cobertura baja es una medida
 **honesta de la incertidumbre del aparato**, no de peor búsqueda; bajar el umbral inflaría la cifra
 contando miradas que el aparato sitúa a más de una casilla del objetivo. (3) Para análisis
 posteriores conviene **estratificar/ponderar por calidad de mirada** (`bias_rms` / `med_conf`) y
-tratar los 5 registros 3D como un subgrupo de menor exactitud.
+tratar los 8 registros 3D como un subgrupo de menor exactitud.

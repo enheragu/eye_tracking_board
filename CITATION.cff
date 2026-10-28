@@ -1,0 +1,34 @@
+cff-version: 1.2.0
+message: "If you use this software, please cite it as below."
+type: software
+title: "eye_tracking_board: Uncertainty-aware gaze-to-cell mapping for mobile eye tracking of visual search on a physical board"
+abstract: >-
+  Processing pipeline that converts Pupil Labs Core recordings of a physical
+  visual search task (an 8x5 board of coloured pieces searched and touched by
+  the participant) into per-trial, per-cell gaze data without manual coding of
+  the trials. It combines ArUco-based board localization with a deterministic
+  cell grid, automatic trial segmentation from the sample panels, a gated
+  post-hoc drift correction from the calibration panels recovered in the scene
+  video, and a per-participant gaze uncertainty model propagated to a
+  probability mass per board cell and a graded target-found confidence.
+authors:
+  - family-names: Heredia-Aguado
+    given-names: Enrique
+    orcid: "https://orcid.org/0009-0001-7717-1428"
+    affiliation: "University Institute for Engineering Research, Miguel Hernández University"
+  - family-names: Cepero Amores
+    given-names: Laura
+    orcid: "https://orcid.org/0009-0008-2295-8013"
+    affiliation: "Universidad Autónoma de Madrid"
+repository-code: "https://github.com/enheragu/eye_tracking_board"
+keywords:
+  - eye tracking
+  - visual search
+  - areas of interest
+  - gaze uncertainty
+  - ArUco
+  - Pupil Labs
+version: 1.5.0
+date-released: 2026-10-28
+license: MIT
+# TBC: add `doi:` once Zenodo mints it.

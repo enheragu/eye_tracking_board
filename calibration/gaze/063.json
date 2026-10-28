@@ -1,0 +1,110 @@
+{
+  "participant": "063",
+  "apply": false,
+  "calib_segment_times": [
+    -12.049
+  ],
+  "panel_offsets": [
+    {
+      "t": 9.047,
+      "off_x": -0.00769,
+      "off_y": 0.012894,
+      "seg": 0,
+      "n_dots": 9
+    },
+    {
+      "t": 64.334,
+      "off_x": -0.006187,
+      "off_y": -0.003054,
+      "seg": 0,
+      "n_dots": 9
+    },
+    {
+      "t": 122.386,
+      "off_x": -0.011742,
+      "off_y": 0.013353,
+      "seg": 0,
+      "n_dots": 9
+    },
+    {
+      "t": 188.982,
+      "off_x": -0.00722,
+      "off_y": -0.015495,
+      "seg": 0,
+      "n_dots": 9
+    },
+    {
+      "t": 265.63,
+      "off_x": -0.013854,
+      "off_y": 0.00901,
+      "seg": 0,
+      "n_dots": 9
+    },
+    {
+      "t": 333.232,
+      "off_x": -0.012461,
+      "off_y": 0.007104,
+      "seg": 0,
+      "n_dots": 9
+    }
+  ],
+  "stats": {
+    "base_px": 22.62,
+    "corr_px": 23.16,
+    "gain": -0.024,
+    "gain_lo": -0.202,
+    "gain_hi": 0.211,
+    "n_points": 54
+  },
+  "uncertainty": {
+    "jitter_cov_px": {
+      "sigma_major": 10.15,
+      "sigma_minor": 8.99,
+      "angle_deg": 62.3
+    },
+    "conf_var_factor": {
+      "conf": [
+        0.675,
+        0.8,
+        0.89,
+        0.955,
+        0.995
+      ],
+      "factor": [
+        2.189,
+        0.435,
+        0.435,
+        0.435,
+        0.435
+      ]
+    },
+    "spatial_var_factor": {
+      "model": "radial_ecc_px",
+      "ecc": [
+        156.7,
+        291.0,
+        405.4
+      ],
+      "factor": [
+        1.225,
+        0.787,
+        1.03
+      ]
+    },
+    "jitter_rms_px": 13.56,
+    "n_samples": 9842,
+    "units": "image px (1280x720); Sigma_meas = jitter_cov * conf_var_factor(conf) * spatial_var_factor(ecc)",
+    "bias_cov_px": [
+      [
+        684.6565436918269,
+        -81.32039274690838
+      ],
+      [
+        -81.32039274690838,
+        262.0056455020079
+      ]
+    ]
+  },
+  "fingerprint": "c8535194111f",
+  "units": "normalized image coords, origin top-left; subtract off from [x, 1-y]"
+}

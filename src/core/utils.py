@@ -2,12 +2,43 @@
 #!/usr/bin/env python3
 # encoding: utf-8
 
+import os
 import sys
+import glob
 import math
 from tqdm import tqdm
 
 import cv2 as cv
 import numpy as np
+
+
+def participant_input_spec(participant_id):
+    """Map a participant id to (input_folder, prefer_offline). An '<id>_oc' (offline
+    calibration) variant reads its input from the base '<id>' folder and uses the OFFLINE
+    gaze; a plain id uses the ONLINE (root) gaze. This lets the same recording be processed
+    both ways (e.g. 008_1 online vs 008_1_oc offline) and compared side by side."""
+    if participant_id.endswith('_oc'):
+        return participant_id[:-len('_oc')], True
+    return participant_id, False
+
+
+def resolve_eye_source(participant_path, topic, prefer_offline=True):
+    """Where to read an eye-data pldata from for a participant, as (directory, file_topic)
+    to feed load_pldata_file. By default the OFFLINE version of the requested topic is
+    preferred when present (the "best data"), falling back to the online (root) file:
+      · gaze       -> offline_data/gaze-mappings/<name>-<uuid>.pldata  (Pupil Player re-mapping)
+      · fixations  -> offline_data/<topic>.pldata
+    The returned file_topic may be a UUID-named stem; the caller keeps its own LOGICAL topic.
+    prefer_offline=False forces the online (root) file (escape hatch for reproducing old runs)."""
+    if prefer_offline:
+        offline = os.path.join(participant_path, 'offline_data')
+        if topic == 'gaze':
+            cands = sorted(glob.glob(os.path.join(offline, 'gaze-mappings', '*.pldata')))
+            if cands:
+                return os.path.dirname(cands[0]), os.path.basename(cands[0])[:-len('.pldata')]
+        elif os.path.isfile(os.path.join(offline, topic + '.pldata')):
+            return offline, topic
+    return participant_path, topic
 
 class bcolors:
     HEADER = '\033[95m'
@@ -292,3 +323,37 @@ def dumpYaml(file_path, data, mode = "w+"):
         yaml.add_representer(dict, represent_dict)
         yaml.dump(data, file, encoding='utf-8', width=float(5000))
         
+
+################################
+#    Participant public ids    #
+################################
+
+# Some recordings live in folders named after the participant. Everything the repository
+# stores per participant (calibration/gaze/<id>.json, cfg/trials_config_exceptions/
+# <id>_trials_config.yaml) is keyed by an anonymous code instead (P-A, P-B, ...). The
+# folder -> code map is PRIVATE: it lives next to the data and is never committed.
+# Ids absent from the map (the numeric ones) are their own public id.
+PARTICIPANT_CODES_PATH = os.environ.get(
+    'EEHA_PARTICIPANT_CODES',
+    '/media/quique/EXTERNAL_USB1/BusquedaVisualAnalysis/participant_codes_PRIVATE.yaml')
+_participant_codes = None
+
+def public_participant_id(participant_id):
+    """Public (anonymous) id of a participant folder, used to key repository artifacts.
+    An '<id>_oc' variant maps its base id and keeps the suffix. Without the private map,
+    named folders keep their name and do not find their artifacts; this is warned once,
+    since their drift correction and trials exception would otherwise be skipped silently."""
+    global _participant_codes
+    if _participant_codes is None:
+        if os.path.isfile(PARTICIPANT_CODES_PATH):
+            _participant_codes = (parseYaml(PARTICIPANT_CODES_PATH) or {}).get('codes') or {}
+        else:
+            _participant_codes = {}
+            log(f"[WARNING] Participant code map not found at {PARTICIPANT_CODES_PATH} "
+                f"(set EEHA_PARTICIPANT_CODES). Named participant folders will not find their "
+                f"gaze calibration or trials exception in the repository.")
+    if participant_id.endswith('_oc'):
+        base, suffix = participant_id[:-len('_oc')], '_oc'
+    else:
+        base, suffix = participant_id, ''
+    return _participant_codes.get(base, base) + suffix

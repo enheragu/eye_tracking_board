@@ -1,0 +1,111 @@
+{
+  "participant": "015_oc",
+  "apply": false,
+  "calib_segment_times": [
+    -2.788,
+    20.041
+  ],
+  "panel_offsets": [
+    {
+      "t": 19.868,
+      "off_x": 0.001345,
+      "off_y": -0.002105,
+      "seg": 0,
+      "n_dots": 7
+    },
+    {
+      "t": 100.348,
+      "off_x": 0.001859,
+      "off_y": 0.008888,
+      "seg": 1,
+      "n_dots": 9
+    },
+    {
+      "t": 174.037,
+      "off_x": 0.01215,
+      "off_y": 0.05252,
+      "seg": 1,
+      "n_dots": 9
+    },
+    {
+      "t": 277.404,
+      "off_x": 0.003166,
+      "off_y": 0.040761,
+      "seg": 1,
+      "n_dots": 8
+    },
+    {
+      "t": 365.428,
+      "off_x": -0.004655,
+      "off_y": 0.070816,
+      "seg": 1,
+      "n_dots": 5
+    },
+    {
+      "t": 436.351,
+      "off_x": -0.00641,
+      "off_y": -0.074672,
+      "seg": 1,
+      "n_dots": 3
+    }
+  ],
+  "stats": {
+    "base_px": 35.28,
+    "corr_px": 33.56,
+    "gain": 0.049,
+    "gain_lo": -0.291,
+    "gain_hi": 0.213,
+    "n_points": 41
+  },
+  "uncertainty": {
+    "jitter_cov_px": {
+      "sigma_major": 19.41,
+      "sigma_minor": 13.22,
+      "angle_deg": 92.4
+    },
+    "conf_var_factor": {
+      "conf": [
+        0.675,
+        0.8,
+        0.89,
+        0.955,
+        0.995
+      ],
+      "factor": [
+        0.422,
+        0.422,
+        0.422,
+        0.422,
+        0.422
+      ]
+    },
+    "spatial_var_factor": {
+      "model": "radial_ecc_px",
+      "ecc": [
+        105.7,
+        223.0,
+        325.4
+      ],
+      "factor": [
+        1.408,
+        0.981,
+        0.595
+      ]
+    },
+    "jitter_rms_px": 23.48,
+    "n_samples": 11496,
+    "units": "image px (1280x720); Sigma_meas = jitter_cov * conf_var_factor(conf) * spatial_var_factor(ecc)",
+    "bias_cov_px": [
+      [
+        402.7362568198264,
+        128.78821568726465
+      ],
+      [
+        128.78821568726465,
+        1125.513181739551
+      ]
+    ]
+  },
+  "fingerprint": "c8535194111f",
+  "units": "normalized image coords, origin top-left; subtract off from [x, 1-y]"
+}

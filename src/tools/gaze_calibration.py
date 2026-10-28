@@ -28,6 +28,9 @@ import json
 import argparse
 import hashlib
 import inspect
+import tempfile
+
+from concurrent.futures import ProcessPoolExecutor, as_completed
 
 import cv2 as cv
 import numpy as np
@@ -36,7 +39,7 @@ REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__fi
 sys.path.insert(0, REPO_ROOT)
 
 from src.core.deps.file_methods import load_pldata_file
-from src.core.utils import log
+from src.core.utils import log, resolve_eye_source, participant_input_spec, public_participant_id
 
 try:
     from sklearn.cluster import KMeans
@@ -79,9 +82,10 @@ def load_blink_intervals(data_path):
     return np.array(intervals) if intervals else np.zeros((0, 2))
 
 
-def load_gaze(data_path):
+def load_gaze(data_path, prefer_offline=False):
     """Returns (timestamps, xy_pixels_topleft) for valid, non-blink samples."""
-    gz = load_pldata_file(directory=data_path, topic="gaze", track_progress_in_console=False)
+    gdir, gtopic = resolve_eye_source(data_path, "gaze", prefer_offline)
+    gz = load_pldata_file(directory=gdir, topic=gtopic, track_progress_in_console=False)
     raw = np.array([(d["timestamp"], d["norm_pos"][0] * W, (1 - d["norm_pos"][1]) * H, d["confidence"])
                     for d in gz.data])
     blinks = load_blink_intervals(data_path)
@@ -219,11 +223,11 @@ def grid_at(cap, world_ts, n_frames, abs_ts):
     return fit_grid(detect_dots(cv.cvtColor(frame, cv.COLOR_BGR2GRAY))) if ok else None
 
 
-def measure_residuals(data_path):
+def measure_residuals(data_path, prefer_offline=False):
     """Per-panel per-dot residual (gaze - dot) in pixels, plus calibration times."""
     world_ts = np.sort(np.load(os.path.join(data_path, "world_timestamps.npy")))
     t0 = world_ts[0]
-    ts, xy = load_gaze(data_path)
+    ts, xy = load_gaze(data_path, prefer_offline)
     calib_times = load_calibration_times(data_path, t0)
 
     cap = cv.VideoCapture(os.path.join(data_path, "world.mp4"))
@@ -321,10 +325,11 @@ def gate_decision(base, corr):
 # --------------------------------------------------------------------------- #
 #  Per-sample measurement-noise model (Phase 0 uncertainty)
 # --------------------------------------------------------------------------- #
-def _load_gaze_conf(data_path):
+def _load_gaze_conf(data_path, prefer_offline=False):
     """Like load_gaze but KEEPS the per-sample confidence: returns (ts, xy_px_topleft,
     conf) for valid (conf > threshold), non-blink samples."""
-    gz = load_pldata_file(directory=data_path, topic="gaze", track_progress_in_console=False)
+    gdir, gtopic = resolve_eye_source(data_path, "gaze", prefer_offline)
+    gz = load_pldata_file(directory=gdir, topic=gtopic, track_progress_in_console=False)
     raw = np.array([(d["timestamp"], d["norm_pos"][0] * W, (1 - d["norm_pos"][1]) * H, d["confidence"])
                     for d in gz.data])
     blinks = load_blink_intervals(data_path)
@@ -357,7 +362,7 @@ def _isotonic_nonincreasing(y):
     return out
 
 
-def measure_uncertainty(data_path, panels=None):
+def measure_uncertainty(data_path, panels=None, prefer_offline=False):
     """Per-sample measurement-noise model from the calibration panels (Phase 0).
     In image pixels: (a) base 2x2 jitter covariance (anisotropic/tilted, de-biased per
     dot); (b) a MONOTONE confidence->variance factor; (c) a coarse radial (eccentricity)
@@ -366,7 +371,7 @@ def measure_uncertainty(data_path, panels=None):
         Sigma_meas(conf, pos) = jitter_cov * conf_var_factor(conf) * spatial_var_factor(ecc)
 
     The accuracy/bias (drift) is handled separately (panel_offsets / base_px)."""
-    ts, xy, conf = _load_gaze_conf(data_path)
+    ts, xy, conf = _load_gaze_conf(data_path, prefer_offline)
     if len(ts) < 50:
         return None
     cap = cv.VideoCapture(os.path.join(data_path, "world.mp4"))
@@ -441,8 +446,8 @@ def calibration_fingerprint():
     fns = [measure_uncertainty, _load_gaze_conf, _cov_ellipse, _isotonic_nonincreasing,
            measure_residuals, cv_gain, gate_decision, build_artifact, fixations,
            detect_panels, grid_at, calibrate_participant,
-           load_blink_intervals, load_gaze, load_calibration_times,
-           detect_dots, fit_grid, grid_present, segment_of]
+           load_blink_intervals, load_gaze, load_calibration_times, resolve_eye_source,
+           participant_input_spec, detect_dots, fit_grid, grid_present, segment_of]
     parts = []
     for fn in fns:
         try:
@@ -481,11 +486,14 @@ def build_artifact(participant, rows, panels, calib_times, apply, stats, uncerta
 
 
 def calibrate_participant(participant, input_root, out_dir):
-    data_path = os.path.join(input_root, participant)
+    # '<id>_oc' reads its input from the base '<id>' folder and uses the OFFLINE gaze; a plain
+    # id uses the ONLINE gaze. The artifact is keyed by the FULL id (so <id>_oc.json is separate).
+    input_folder, prefer_offline = participant_input_spec(participant)
+    data_path = os.path.join(input_root, input_folder)
     if not os.path.isdir(data_path):
         log(f"[gaze_calibration] {participant}: input folder not found ({data_path})")
         return None
-    rows, panels, calib_times = measure_residuals(data_path)
+    rows, panels, calib_times = measure_residuals(data_path, prefer_offline)
     if len(rows) == 0 or len(set(rows[:, 0].astype(int))) < 3:
         log(f"[gaze_calibration] {participant}: not enough panel data ({len(panels)} panels) -> skipped")
         artifact = {"participant": participant, "apply": False, "stats": {"reason": "insufficient_panels"},
@@ -493,7 +501,7 @@ def calibrate_participant(participant, input_root, out_dir):
     else:
         base, corr, base_vec, corr_vec = cv_gain(rows, calib_times)
         apply, stats = gate_decision(base, corr)
-        uncertainty = measure_uncertainty(data_path, panels=panels)
+        uncertainty = measure_uncertainty(data_path, panels=panels, prefer_offline=prefer_offline)
         # anisotropic accuracy/drift covariance (2x2 second moment of the residual
         # vectors: corrected if the drift gate passed, else raw). This is the bias floor.
         vec = corr_vec if apply else base_vec
@@ -513,22 +521,75 @@ def calibrate_participant(participant, input_root, out_dir):
     return artifact
 
 
+def _calibrate_worker(participant, input_root, out_dir, cv_threads):
+    """Pool worker: bound OpenCV threads (so several videos scanned at once do not
+    oversubscribe the CPU) and isolate per-participant errors so one bad recording
+    does not abort the batch. Returns (participant, ok, error_message|None)."""
+    if cv_threads and cv_threads > 0:
+        try:
+            cv.setNumThreads(int(cv_threads))
+        except Exception:  # noqa: BLE001 - thread cap is best-effort
+            pass
+    try:
+        # Artifacts are keyed by the participant's public (anonymous) id, see
+        # public_participant_id. calibrate_participant is left untouched because its source is
+        # part of calibration_fingerprint: it writes into a scratch folder and the artifact is
+        # re-keyed here, so a file named after a participant never lands in the repository.
+        with tempfile.TemporaryDirectory() as scratch_dir:
+            artifact = calibrate_participant(participant, input_root, scratch_dir)
+        if artifact is not None:
+            public_id = public_participant_id(participant)
+            artifact["participant"] = public_id
+            os.makedirs(out_dir, exist_ok=True)
+            with open(os.path.join(out_dir, f"{public_id}.json"), "w") as f:
+                json.dump(artifact, f, indent=2)
+        return participant, True, None
+    except Exception as exc:  # noqa: BLE001 - one bad participant must not stop the batch
+        return participant, False, f"{type(exc).__name__}: {exc}"
+
+
 def main():
     ap = argparse.ArgumentParser(description="Per-participant gaze drift calibration from video panels.")
     ap.add_argument("-p", "--participant", action="append", help="participant id (repeatable; default: all in input root)")
     ap.add_argument("--input-root", required=True, help="folder with per-participant InputData subfolders")
     ap.add_argument("--out-dir", default=os.path.join(REPO_ROOT, "calibration", "gaze"), help="output folder for <id>.json artifacts")
+    ap.add_argument("-j", "--jobs", type=int, default=max(1, (os.cpu_count() or 4) // 2),
+                    help="participants calibrated in parallel (one process each, scanning one video each). "
+                         "Default ~cores/2; use 1 to force sequential.")
+    ap.add_argument("--cv-threads", type=int, default=2,
+                    help="OpenCV threads per parallel job, to bound oversubscription (default 2; ignored when -j 1).")
     args = ap.parse_args()
 
     participants = args.participant
     if not participants:
         participants = sorted(d for d in os.listdir(args.input_root)
                               if os.path.isdir(os.path.join(args.input_root, d)))
-    for participant in participants:
-        try:
-            calibrate_participant(participant, args.input_root, args.out_dir)
-        except Exception as exc:  # noqa: BLE001 - one bad participant must not stop the batch
-            log(f"[gaze_calibration] {participant}: ERROR {type(exc).__name__}: {exc}")
+
+    jobs = max(1, min(args.jobs, len(participants)))
+    # With a single job the oversubscription concern is moot: leave OpenCV at its default
+    # (all cores) so the lone video scans as fast as possible (cv_threads=0 -> no cap).
+    cv_threads = args.cv_threads if jobs > 1 else 0
+    log(f"[gaze_calibration] {len(participants)} participant(s), {jobs} in parallel"
+        + (f" ({cv_threads} OpenCV threads each)" if jobs > 1 else " (sequential)") + ".")
+
+    if jobs == 1:
+        for participant in participants:
+            _, ok, err = _calibrate_worker(participant, args.input_root, args.out_dir, cv_threads)
+            if not ok:
+                log(f"[gaze_calibration] {participant}: ERROR {err}")
+        return
+
+    with ProcessPoolExecutor(max_workers=jobs) as executor:
+        futures = {executor.submit(_calibrate_worker, p, args.input_root, args.out_dir, cv_threads): p
+                   for p in participants}
+        for future in as_completed(futures):
+            p = futures[future]
+            try:
+                participant, ok, err = future.result()
+                if not ok:
+                    log(f"[gaze_calibration] {participant}: ERROR {err}")
+            except Exception as exc:  # noqa: BLE001 - worker process died (e.g. native crash)
+                log(f"[gaze_calibration] {p}: ERROR (worker terminated) {type(exc).__name__}: {exc}")
 
 
 if __name__ == "__main__":

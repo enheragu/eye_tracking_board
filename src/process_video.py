@@ -13,7 +13,7 @@ import cv2 as cv
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, REPO_ROOT)
 
-from src.core.utils import log, setVerboseLog
+from src.core.utils import log, setVerboseLog, resolve_eye_source, participant_input_spec, public_participant_id
 from src.core.version import __version__
 
 from src.core.BoardHandler import BoardHandler
@@ -43,7 +43,8 @@ colors_list = {'red': (0,0,255), 'green': (0,255,0), 'blue': (255,0,0), 'yellow'
 parser = argparse.ArgumentParser(description='Process PupilLabs data with board')
 parser.add_argument('-p', dest='participant', type=str, default='00001', metavar='id', help='Participant folder id')
 parser.add_argument('-t', dest='topic', type=str, default='gaze', metavar='topic', help='Eye data topic to process (gaze/fixations). Default gaze (the primary topic; matches run_all).')
-parser.add_argument('-o', '--use_offline_data', action='store_true', default=False, help='Makes use of offline data instead of online data. Note that offline data includes fixations but not gaze data.')
+# Offline calibration is selected by the participant-id suffix '_oc' (handled by
+# participant_input_spec): '<id>' = online (root) gaze, '<id>_oc' = offline gaze re-mapping.
 parser.add_argument('-v', '--visualization', action='store_true', default=False, help='Enable visualization for process.')
 parser.add_argument('-s', '--slow_analysis', action='store_true', default=False, help='(Default behaviour, kept for compatibility) precise transition detection, no frame subsampling.')
 parser.add_argument('--fast_analysis', action='store_true', default=False, help='Subsample init/get_test_name (~6.5x faster) but MAY miss marginally-detected trial starts: iteration only, NOT for trusted output. Default is slow/precise.')
@@ -68,7 +69,7 @@ setVerboseLog(args.debug_log)
 # at startup, so a result is self-describing and degradations from a changed option surface
 # immediately instead of weeks later.
 run_config = {'slow_analysis': slow_analysis, 'topic': eye_data_topic,
-              'use_offline_data': args.use_offline_data,
+              'offline_calibration': participant_id.endswith('_oc'),
               'start_frame': args.start_frame, 'end_frame': args.end_frame}
 
 # Avoid oversubscription when several participants run in parallel (see run_all.py)
@@ -77,9 +78,18 @@ if 'EEHA_CV_THREADS' in os.environ:
 
 WINDOW_STREAM_BOARD = f'Board View {participant_id}'
 
-participant_path = os.path.join(args.data_root, participant_id)
-data_path = participant_path if not args.use_offline_data else os.path.join(participant_path,'offline_data')
+# '<id>_oc' (offline calibration) reads its input from the base '<id>' folder and uses the OFFLINE
+# gaze; a plain id uses the ONLINE (root) gaze. Output stays keyed by the FULL id (so '<id>' and
+# '<id>_oc' are separate outputs that the analysis team can compare).
+input_folder, prefer_offline = participant_input_spec(participant_id)
+participant_path = os.path.join(args.data_root, input_folder)
 video_path = os.path.join(participant_path,'world.mp4')
+
+# Resolve the eye-data file: for an '_oc' run, the offline version of the topic (e.g. an offline
+# gaze re-mapping); else the online (root) file. The logical topic stays eye_data_topic.
+eye_data_dir, eye_data_file_topic = resolve_eye_source(participant_path, eye_data_topic, prefer_offline)
+if eye_data_dir != participant_path:
+    log(f"[processVideo::{participant_id}] Using OFFLINE eye data: {eye_data_dir}/{eye_data_file_topic}.pldata")
 
 if not os.path.isdir(participant_path):
     raise FileNotFoundError(f"Participant data folder not found: {participant_path}. "
@@ -95,7 +105,10 @@ os.makedirs(output_path, exist_ok=True)
 camera_calibration_path = os.path.join(REPO_ROOT, 'calibration/camera_calib.json')
 game_configuration= os.path.join(REPO_ROOT,'cfg/game_config.yaml')
 game_aruco_board_cfg= os.path.join(REPO_ROOT,'cfg/game_aruco_board.yaml')
-trial_blocks_cfg= os.path.join(REPO_ROOT,f'cfg/trials_config_exceptions/{participant_id}_trials_config.yaml')
+# The trials-config exception is a property of the RECORDING, so an '<id>_oc' variant uses its
+# base '<id>' exception (input_folder), not '<id>_oc' (which would never have its own file).
+# The file is keyed by the public (anonymous) id of that folder, see public_participant_id.
+trial_blocks_cfg= os.path.join(REPO_ROOT,f'cfg/trials_config_exceptions/{public_participant_id(input_folder)}_trials_config.yaml')
 default_trial_blocks_cfg= os.path.join(REPO_ROOT,f'cfg/default_trials_config.yaml')
 if not os.path.exists(trial_blocks_cfg):
     log(f"[processVideo::{participant_id}] Using default file for trials configuration: {trial_blocks_cfg}.")
@@ -159,7 +172,7 @@ def processVideo(video_path):
                                  colors_list=colors_list, distortion_handler=distortion_handler,
                                  enable_visualization=enable_visualization)
 
-    eye_data_handler = EyeDataHandler(root_path=participant_path, data_path=data_path, video_fps=fps, topic_data=eye_data_topic, participant_id=participant_id)
+    eye_data_handler = EyeDataHandler(root_path=participant_path, data_path=eye_data_dir, video_fps=fps, topic_data=eye_data_topic, participant_id=participant_id, data_file_topic=eye_data_file_topic)
 
     state_machine_handler = StateMachine(board_handler, panel_handler, eye_data_handler, distortion_handler,
                                          sequence_cfg_path = trial_blocks_cfg, video_fps=fps, slow_analysis=slow_analysis)

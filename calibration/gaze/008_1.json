@@ -1,0 +1,119 @@
+{
+  "participant": "008_1",
+  "apply": false,
+  "calib_segment_times": [
+    -2.686,
+    107.07,
+    350.197
+  ],
+  "panel_offsets": [
+    {
+      "t": 8.055,
+      "off_x": -0.001807,
+      "off_y": -0.009543,
+      "seg": 0,
+      "n_dots": 9
+    },
+    {
+      "t": 86.338,
+      "off_x": -0.008555,
+      "off_y": 0.008244,
+      "seg": 0,
+      "n_dots": 7
+    },
+    {
+      "t": 162.104,
+      "off_x": 0.001015,
+      "off_y": 0.010004,
+      "seg": 1,
+      "n_dots": 8
+    },
+    {
+      "t": 238.121,
+      "off_x": 0.011114,
+      "off_y": 0.020717,
+      "seg": 1,
+      "n_dots": 8
+    },
+    {
+      "t": 310.111,
+      "off_x": 0.007845,
+      "off_y": -0.007863,
+      "seg": 1,
+      "n_dots": 2
+    },
+    {
+      "t": 342.079,
+      "off_x": 0.012174,
+      "off_y": -0.005326,
+      "seg": 1,
+      "n_dots": 8
+    },
+    {
+      "t": 408.028,
+      "off_x": 0.01132,
+      "off_y": 0.020188,
+      "seg": 2,
+      "n_dots": 8
+    }
+  ],
+  "stats": {
+    "base_px": 32.43,
+    "corr_px": 33.29,
+    "gain": -0.027,
+    "gain_lo": -0.187,
+    "gain_hi": 0.066,
+    "n_points": 50
+  },
+  "uncertainty": {
+    "jitter_cov_px": {
+      "sigma_major": 21.92,
+      "sigma_minor": 16.43,
+      "angle_deg": 79.2
+    },
+    "conf_var_factor": {
+      "conf": [
+        0.675,
+        0.8,
+        0.89,
+        0.955,
+        0.995
+      ],
+      "factor": [
+        1.332,
+        1.096,
+        0.912,
+        0.912,
+        0.912
+      ]
+    },
+    "spatial_var_factor": {
+      "model": "radial_ecc_px",
+      "ecc": [
+        106.4,
+        216.5,
+        363.3
+      ],
+      "factor": [
+        1.234,
+        0.926,
+        0.96
+      ]
+    },
+    "jitter_rms_px": 27.39,
+    "n_samples": 12967,
+    "units": "image px (1280x720); Sigma_meas = jitter_cov * conf_var_factor(conf) * spatial_var_factor(ecc)",
+    "bias_cov_px": [
+      [
+        488.36258868263866,
+        -49.01064820909967
+      ],
+      [
+        -49.01064820909967,
+        824.5331011402301
+      ]
+    ]
+  },
+  "fingerprint": "c8535194111f",
+  "units": "normalized image coords, origin top-left; subtract off from [x, 1-y]"
+}

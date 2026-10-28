@@ -1,0 +1,16 @@
+
+## All 6 blocks of trials  (015)
+# Bloque 4: el red_circle (t0) se detecta dos veces seguidas (world.mp4 ~6:16.1 y ~6:17.3). La
+# primera (~6:16, 0.34 s, sin búsqueda ni toque) es espuria: se ve un instante al experimentador
+# al no tapar bien la carta; la búsqueda real es la segunda (~6:17.3, con toque). Se añade un
+# [-1, "red_circle"] ANTES de [0] para consumir la primera como descarte documentado; así [0] = la
+# búsqueda real y el resto de los bloques 4 y 5 no se desincroniza (mismo patrón que 027/P-C).
+# Verificado en vídeo.
+# Includes [block_id,[[trial_id, trial_name], ...]]
+test_block_list:
+ - [0, [[0, "yellow_circle"],  [1, "red_hexagon"],     [2, "green_triangle"], [3, "blue_circle"],    [4, "red_triangle"],   [5, "yellow_hexagon"],  [6, "blue_triangle"],  [7, "green_hexagon"],  [8, "yellow_triangle"], [9, "red_circle"]]]
+ - [1, [[0, "red_hexagon"],    [1, "yellow_triangle"], [2, "blue_circle"],    [3, "green_triangle"], [4, "yellow_circle"],  [5, "blue_triangle"],   [6, "red_circle"],     [7, "yellow_hexagon"], [8, "red_triangle"],    [9, "green_hexagon"]]]
+ - [2, [[0, "red_circle"],     [1, "yellow_triangle"], [2, "green_hexagon"],  [3, "blue_triangle"],  [4, "yellow_hexagon"], [5, "red_triangle"],    [6, "blue_circle"],    [7, "green_triangle"], [8, "red_hexagon"],     [9, "yellow_circle"]]]
+ - [3, [[0, "yellow_hexagon"], [1, "red_triangle"],    [2, "yellow_circle"],  [3, "blue_triangle"],  [4, "red_hexagon"],    [5, "green_triangle"],  [6, "blue_circle"],    [7, "green_hexagon"],  [8, "yellow_triangle"], [9, "red_circle"]]]
+ - [4, [[-1, "red_circle"],    [0, "red_circle"],      [1, "blue_triangle"],  [2, "yellow_circle"],  [3, "green_triangle"], [4, "red_hexagon"],     [5, "yellow_triangle"], [6, "blue_circle"],   [7, "green_hexagon"],   [8, "red_triangle"],   [9, "yellow_hexagon"]]]
+ - [5, [[0, "green_hexagon"],  [1, "red_triangle"],    [2, "yellow_hexagon"], [3, "red_circle"],     [4, "blue_triangle"],  [5, "yellow_circle"],   [6, "green_triangle"], [7, "blue_circle"],    [8, "yellow_triangle"], [9, "red_hexagon"]]]

@@ -20,6 +20,7 @@
 """
 
 import os
+import re
 import sys
 import csv
 import glob
@@ -294,6 +295,16 @@ STATUS_CLASS = {
 }
 
 
+def _pattr(p):
+    """Per-participant HTML attributes for the online/offline (`_oc`) filter: `data-part` is a
+    CSS-safe token of the id and `data-src` is 'offline' for `_oc` variants (post-calibration),
+    'online' otherwise. Put on every element (th/td/tr) that belongs to one participant so the
+    client-side filter can hide it."""
+    src = 'offline' if p.endswith('_oc') else 'online'
+    tok = re.sub(r'[^A-Za-z0-9]', '_', p)
+    return f'data-part="{tok}" data-src="{src}"'
+
+
 def buildDetectionSummary(versions, labels):
     """Detection HEALTH per participant x version: how many real trials were segmented vs
     how many came out as detection errors. NOT a trial-by-trial matrix — the errors are a
@@ -312,7 +323,7 @@ def buildDetectionSummary(versions, labels):
             cls = 'c-ok' if errs == 0 else ('c-panel' if errs <= 3 else 'c-error')
             disp = f'{valid} / {errs}' if (valid or errs) else '&nbsp;'
             cells += f'<td class="vcol v{i} {cls}">{disp}</td>'
-        rows += f'<tr><td class="idx">{n}</td><td class="name">{html.escape(p)}</td>{cells}</tr>'
+        rows += f'<tr {_pattr(p)}><td class="idx">{n}</td><td class="name">{html.escape(p)}</td>{cells}</tr>'
     note = ('<p><b>Salud de la detección.</b> Trials <b>reales</b> segmentados frente a '
             '<b>errores de detección</b> por participante y versión. Un error '
             '(<code>missing_trial_error</code> = no se detectó el panel esperado; '
@@ -357,7 +368,7 @@ def buildTable(versions, labels, cell_fn):
     keys = sorted({(b, t) for v in versions for p in participants
                    for (b, t), tr in v.get(p, {}).items() if isValid(tr)}) if participants else []
     head = ('<tr><th>Blk</th><th>Tr</th><th>Trial</th>'
-            + ''.join(f'<th>{html.escape(p)}</th>' for p in participants) + '</tr>')
+            + ''.join(f'<th {_pattr(p)}>{html.escape(p)}</th>' for p in participants) + '</tr>')
     rows = []
     for (block, trial) in keys:
         name = ''
@@ -375,7 +386,7 @@ def buildTable(versions, labels, cell_fn):
                 txt, cls = cell_fn(v.get(p, {}).get((block, trial)))
                 disp = html.escape(str(txt)) if str(txt) else '&nbsp;'
                 subs += f'<span class="sub v{i} {cls}" title="{html.escape(labels[i])}">{disp}</span>'
-            cells += f'<td class="mcell">{subs}</td>'
+            cells += f'<td class="mcell" {_pattr(p)}>{subs}</td>'
         rows.append(f'<tr><td>{block}</td><td>{trial}</td><td class="name">{html.escape(name)}</td>{cells}</tr>')
     return f'<table class="matrix">{head}{"".join(rows)}</table>'
 
@@ -452,7 +463,7 @@ def buildTouchTable(versions, labels):
                 reach = ts - latest['duration']
                 touch_cell = f'<td class="vcol v{last} c-target">{ts:.2f}</td>'
                 delta_cell = f'<td class="vcol v{last} c-target">{reach:+.2f}</td>'
-            rows.append(f'<tr><td>{html.escape(participant)}</td><td>{block}</td><td>{trial}</td>'
+            rows.append(f'<tr {_pattr(participant)}><td>{html.escape(participant)}</td><td>{block}</td><td>{trial}</td>'
                         f'<td class="name">{html.escape(name)}</td>{cells}{touch_cell}{delta_cell}</tr>')
     pct = (100.0 * n_touch / n_trials) if n_trials else 0.0
     summary = (f'<p>Toque detectado en <b>{n_touch}/{n_trials}</b> trials válidos de '
@@ -641,7 +652,7 @@ def buildStageCoveragePerParticipant(versions, labels):
                    'border-radius:2px;vertical-align:middle;overflow:hidden">'
                    f'<span style="display:block;height:9px;width:{cov:.0f}%;background:{barcol}"></span></span>')
             cells += f'<td class="{cls}" style="white-space:nowrap">{cov:.0f}% {bar}</td>'
-        rows += f'<tr><td class="idx">{n}</td><td class="name">{html.escape(p)}</td>{cells}<td>{len(valid)}</td></tr>'
+        rows += f'<tr {_pattr(p)}><td class="idx">{n}</td><td class="name">{html.escape(p)}</td>{cells}<td>{len(valid)}</td></tr>'
     note = (f'<h3>Cobertura de detección por participante — {html.escape(labels[-1])}</h3>'
             '<p>% de trials válidos con cada marca detectada (<b>objetivo visto</b>, <b>mano entra</b>, '
             '<b>toque</b>, <b>mano sale</b>), <b>por participante</b>, con barra (verde &ge;85%, '
@@ -742,7 +753,7 @@ def buildOutcomePerParticipant(versions, labels):
         cnt = {et: sum(1 for t in valid if (t.get('error_type') or '') == et) for et in ('correct', 'off_target', 'no_touch', '')}
         off_cls = ' class="c-error"' if cnt['off_target'] else ''
         not_cls = ' class="c-panel"' if cnt['no_touch'] else ''
-        rows += (f'<tr><td class="idx">{n}</td><td class="name">{html.escape(p)}</td>'
+        rows += (f'<tr {_pattr(p)}><td class="idx">{n}</td><td class="name">{html.escape(p)}</td>'
                  f'<td>{cnt["correct"]}</td><td{off_cls}>{cnt["off_target"]}</td>'
                  f'<td{not_cls}>{cnt["no_touch"]}</td>'
                  f'<td class="c-missing">{cnt[""]}</td><td>{len(valid)}</td></tr>')
@@ -877,6 +888,24 @@ function toggleV(i,on){
 }
 // On load: apply each version's default checked state (first+last) to the columns.
 document.querySelectorAll('.vsel:first-of-type input[type=checkbox]').forEach((c,i)=>toggleV(i,c.checked));
+// Online / offline (`_oc`) source filter. Shows/hides every per-participant element (th/td/tr,
+// via data-src) across all tabs. 'Mejor por participante' (fbest): show, per online/offline pair,
+// only the higher-coverage variant (HIDE_BEST = the LOWER-coverage variant tokens to hide; the
+// offline re-mapping is not always better).
+function applyFilter(){
+  var on=document.getElementById('fon').checked,
+      off=document.getElementById('foff').checked,
+      best=document.getElementById('fbest').checked;
+  document.getElementById('fon').disabled=best;
+  document.getElementById('foff').disabled=best;
+  document.querySelectorAll('[data-part]').forEach(function(e){
+    var src=e.getAttribute('data-src'), part=e.getAttribute('data-part'), vis;
+    if(best){ vis = HIDE_BEST.indexOf(part) < 0; }
+    else    { vis = (src==='offline') ? off : on; }
+    e.style.display = vis ? '' : 'none';
+  });
+}
+applyFilter();
 showTab(0);
 """
 
@@ -1206,6 +1235,36 @@ def main():
         f'border-radius:2px;vertical-align:middle"></span> {html.escape(l)}</label> '
         for i, l in enumerate(labels)) + '</div>'
 
+    # Online / offline (`_oc` post-calibration) source filter. Every per-participant th/td/tr
+    # carries data-part/data-src (see _pattr); the JS toggles them across all tabs. 'Mejor por
+    # participante' shows the offline variant where it exists and hides its online twin.
+    all_parts = sorted(set().union(*[set(v.keys()) for v in versions]) if versions else set())
+    oc_bases = sorted({p[:-len('_oc')] for p in all_parts if p.endswith('_oc')})
+
+    def _coverage(part_trials):
+        valid = [t for t in part_trials.values() if isValid(t)]
+        return (sum(1 for t in valid if t.get('target_found') is not None) / len(valid)) if valid else 0.0
+
+    # 'Mejor por participante' hides the LOWER-coverage variant of each online/offline pair (the
+    # offline re-mapping is NOT always better), computed on the latest version. hide_best is the
+    # list of variant tokens to hide in that mode.
+    latest = versions[-1] if versions else {}
+    hide_best = []
+    for b in oc_bases:
+        if b in all_parts and (b + '_oc') in all_parts:
+            worse = (b + '_oc') if _coverage(latest.get(b + '_oc', {})) < _coverage(latest.get(b, {})) else b
+            hide_best.append(re.sub(r'[^A-Za-z0-9]', '_', worse))
+    hide_best_js = '[' + ','.join(f'"{t}"' for t in hide_best) + ']'
+    done_txt = ', '.join(html.escape(b) for b in oc_bases) if oc_bases else '(ninguno)'
+    fsel = ('<div class="fsel" style="margin:8px 0;padding:6px 10px;background:#f0f2f4;border-radius:4px">'
+            'Fuente de <i>gaze</i>: '
+            '<label><input type="checkbox" id="fon" checked onchange="applyFilter()"> online</label> &nbsp;'
+            '<label><input type="checkbox" id="foff" checked onchange="applyFilter()"> offline (<code>_oc</code>)</label> &nbsp;'
+            '<label><input type="checkbox" id="fbest" onchange="applyFilter()"> mejor por participante</label>'
+            '<div style="font-size:0.85em;color:#555;margin-top:4px">Con postcalibración offline '
+            f'(<code>_oc</code>): <b>{done_txt}</b>. El resto solo tienen versión online '
+            '(pendientes de postcalibrar).</div></div>')
+
     tabs_html = [
         ('Detección', buildDetectionSummary(versions, labels)),
         ('Tipo de fin', buildTable(versions, labels, cellStatus)),
@@ -1229,9 +1288,10 @@ def main():
            f'<style>{CSS}{version_css}</style></head><body>'
            f'<h1>Informe de procesamiento — comparación de versiones</h1>'
            f'<p>Versiones: {", ".join(html.escape(l) for l in labels)}</p>'
+           f'{fsel}'
            f'{GLOBAL_INTRO}'
            f'<div class="tabs">{tab_buttons}</div>{tab_divs}'
-           f'<script>{JS}</script></body></html>')
+           f'<script>var HIDE_BEST={hide_best_js};{JS}</script></body></html>')
 
     with open(args.out, 'w', encoding='utf-8') as f:
         f.write(doc)

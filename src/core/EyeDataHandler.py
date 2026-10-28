@@ -147,14 +147,19 @@ def check_duplicated_timestamps(data):
         FPS of world.mp4 is 29.81
 """
 class EyeDataHandlerPLDATA:
-    def __init__(self, root_path, data_path, video_fps, topic_data='fixations', participant_id=None):
+    def __init__(self, root_path, data_path, video_fps, topic_data='fixations', participant_id=None, data_file_topic=None):
         start_time = time.time()
 
         self.topic_data = topic_data
         self.participant_id = participant_id
         blink_intervals = load_blink_intervals(root_path)
 
-        pldata = load_pldata_file(directory=data_path, topic=topic_data, track_progress_in_console=True)
+        # The FILE the eye data is read from can differ from the LOGICAL topic: an offline
+        # gaze re-mapping (Pupil Player) lives at offline_data/gaze-mappings/<name>-<uuid>.pldata,
+        # i.e. a non-'gaze' filename, yet it is still gaze and must drive the 'gaze' logic below.
+        # data_file_topic overrides only the filename stem; topic_data stays the logical topic.
+        file_topic = data_file_topic or topic_data
+        pldata = load_pldata_file(directory=data_path, topic=file_topic, track_progress_in_console=True)
         # log(f'{type(data.data)} - {data.data}')
 
         world_timestamps_path = os.path.join(root_path,'world_timestamps.npy')
@@ -164,8 +169,8 @@ class EyeDataHandlerPLDATA:
 
         log(f"[EyeDataHandlerPLDATA(::__init__] Process all {topic_data} topic data to match world timestamps, fixations data from:")
         log(f"\t\t· {world_timestamps_path}")
-        log(f"\t\t· {data_path}/{topic_data}.pldata")
-        log(f"\t\t· {data_path}/{topic_data}_timestamps.npy")
+        log(f"\t\t· {data_path}/{file_topic}.pldata")
+        log(f"\t\t· {data_path}/{file_topic}_timestamps.npy")
 
 
         self.video_fps = video_fps

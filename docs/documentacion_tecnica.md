@@ -186,9 +186,19 @@ state_transitions[ {frame, block, trial, trial_name, from_state, to_state} ]
 ```
 
 `run_config` es la **procedencia** del run: las opciones de ejecución que afectan a la calidad
-(`slow_analysis`, `topic`, `use_offline_data`, `start_frame`, `end_frame`). Se graba para que un
+(`slow_analysis`, `topic`, `offline_calibration`, `start_frame`, `end_frame`). Se graba para que un
 resultado sea autodescriptivo y una degradación por un cambio de opción no haya que
 investigarla a posteriori (ver [§14.1 modos de ejecución](#141-modos-de-ejecución-y-fiabilidad)).
+
+**Fuente del gaze (online vs offline, sufijo `_oc`).** La mirada se lee del `gaze.pldata` online
+de la captura, salvo que el id del participante acabe en **`_oc`**: entonces el pipeline lee la
+carpeta de entrada de la base (`<id>`) pero usa el **re-mapeo de gaze OFFLINE** de Pupil Player
+(`offline_data/gaze-mappings/<nombre>-<uuid>.pldata`), resuelto por `utils.resolve_eye_source`
+(`participant_input_spec` deriva base+offline del sufijo). El topic lógico sigue siendo `gaze`
+(`EyeDataHandler` separa el nombre de fichero del topic). Así un mismo registro se procesa online
+(`<id>`) y offline (`<id>_oc`) y se comparan; la calibración de deriva/incertidumbre
+(`gaze_calibration.py`) usa la misma fuente, de modo que `<id>_oc.json` se calcula sobre el gaze
+offline. `offline_calibration` en `run_config` registra cuál se usó.
 
 Cada `board_metrics` de un *trial* contiene: `init_capture`, `end_capture`,
 `early_init_capture`, `motor_onset_capture` (+ `motor_onset_live`/`motor_onset_source` si se
